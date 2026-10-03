@@ -1,0 +1,252 @@
+[
+  {
+    "file": "0BIGBAD.EHF",
+    "size": 32000,
+    "sha256": "55deaec0d35d8b20e616c9eab7599903997b574045630fea749617c5ecf4fb83"
+  },
+  {
+    "file": "1BIGBAD.EHF",
+    "size": 32000,
+    "sha256": "d864002cd0d65be45c11eae3d3b31c3412a0d53fed49dcd1e587faac5ed5e661"
+  },
+  {
+    "file": "2BIGBAD.EHF",
+    "size": 32000,
+    "sha256": "69c8ff3b129db6a0f613bf676ba742a149d564d5dbb76a8ee78c53e6f7712eda"
+  },
+  {
+    "file": "3BIGBAD.EHF",
+    "size": 32000,
+    "sha256": "f9159e500eb998b537f50491996da5efb476d5ca79003f0836af63e5a6ac7293"
+  },
+  {
+    "file": "AB_END1.VHF",
+    "size": 64768,
+    "sha256": "2f45dc54c063bfc063d2acc6e1cad772ae7fd071942aa619872323ceab8df4ad"
+  },
+  {
+    "file": "AB_END2.VHF",
+    "size": 64768,
+    "sha256": "aa5ca29754ffe4f7494cc186db4da0a092a1c3dd9ff9be61bb52cc34d875391c"
+  },
+  {
+    "file": "ALIEN00.EHF",
+    "size": 32000,
+    "sha256": "4c1eb053d8ffac888f9c24c2488738580d87bd2a2e086dd229c5a899916342ab"
+  },
+  {
+    "file": "ALIEN01.EHF",
+    "size": 32000,
+    "sha256": "02e2b0e21d8b22cddf13c69a027e0fefe2433ae344c56b7569499187ef7e825b"
+  },
+  {
+    "file": "ALIEN02.EHF",
+    "size": 32000,
+    "sha256": "669f08ec93dff25b0026f2d1f7cd19ccfe5a35723cb485ee293e1a1e61c0cf91"
+  },
+  {
+    "file": "ALIEN03.EHF",
+    "size": 32000,
+    "sha256": "4dacd4cf5030d195a5310c8f1ba0e7c7bccb59a2732ade4266dc377ef08bea84"
+  },
+  {
+    "file": "ALIEN1.EHF",
+    "size": 32000,
+    "sha256": "ead28eb14ee99ca22a81a0f6326a15083db85bda656d7ab57a1bf88401cf6e04"
+  },
+  {
+    "file": "AL_LOGO.VHF",
+    "size": 64768,
+    "sha256": "c530a7baa927601030e5556ecd10f885f5306d41149f4430128a0cc245d09e84"
+  },
+  {
+    "file": "ARMDISPL.VHF",
+    "size": 64768,
+    "sha256": "765b4c7dd7690f01e60831e88842993289d4a2c2acce50a481d6fc7cfc83bcfa"
+  },
+  {
+    "file": "AVM256.VHF",
+    "size": 64768,
+    "sha256": "46e1c365b8799e8dbd8d192aea4e4c2100322ba55898b28240731ee03a0963ff"
+  },
+  {
+    "file": "AVM_DD.DAT",
+    "size": 7800,
+    "sha256": "ff142e1315ec7e1f0e77e8fcf68524253f5d40679c14bfea2d40cc134c5a9147"
+  },
+  {
+    "file": "AVM_SB.DAT",
+    "size": 3910,
+    "sha256": "483149992045defeda680c761c9511f0afcd23544580402cae5dbde60909c196"
+  },
+  {
+    "file": "BOOM_NEW.EHF",
+    "size": 32000,
+    "sha256": "984959da73a32058bb98fd98f89a1725f065d0757db3e8a50e084b1b828a90db"
+  },
+  {
+    "file": "CARGOBAY.VHF",
+    "size": 64768,
+    "sha256": "0d2dca5aeafc31f6cec0922ea92f5416cf710a46df3dc1c69f20f558922d6e0f"
+  },
+  {
+    "file": "COMPUTER.VHF",
+    "size": 64768,
+    "sha256": "15008a97fefd773f429f383f0824494b44bbf8516b003a85f48c49963998601c"
+  },
+  {
+    "file": "DECKLIFT.VHF",
+    "size": 64768,
+    "sha256": "281a19cb72bdcd6b474208f788735c1b3ced2a2b5486164e0a30dc4ca20a33d1"
+  },
+  {
+    "file": "DECKMAN1.EHF",
+    "size": 32000,
+    "sha256": "98b149767e47cecbdafaa125313638f214b453c4948d30602c6ead34cef7c1bd"
+  },
+  {
+    "file": "DECKMAN2.EHF",
+    "size": 32000,
+    "sha256": "3e08fea12b63f08e67254ebb5ce183c9c081cc80f7a5d98bbe8a8a995fbee277"
+  },
+  {
+    "file": "FONT.VHF",
+    "size": 64768,
+    "sha256": "286f6d9398ba6096df1e31b66c7207e124c7ca722c88e8a9ee690a019a4c7e17"
+  },
+  {
+    "file": "GAMEOVER.VHF",
+    "size": 64768,
+    "sha256": "a923dffb467f4ff544d52bd6ec5ed8821fac2002b1d8942b0f6125ca9cbc2558"
+  },
+  {
+    "file": "L0MZ.HUF",
+    "size": 26228,
+    "sha256": "f8f276638d703a74f418d4dd3f07d975f159a99a6b7b4c71517a474b4cfc4155"
+  },
+  {
+    "file": "L1MZ.HUF",
+    "size": 26228,
+    "sha256": "45d12871cdcb726c356e92fc1b1c5ce017494b2530261da671f6161b7e4ee9e5"
+  },
+  {
+    "file": "L2MZ.HUF",
+    "size": 26228,
+    "sha256": "7e5089cc6e05bffcf39b6fc43d8d422b063bd9b45c22ac6c5e94ff659caf2865"
+  },
+  {
+    "file": "L3MZ.HUF",
+    "size": 26228,
+    "sha256": "6c7d02e7ac60319666152ef06cbfc9a49a0f6126af6790885af04e925a0a6314"
+  },
+  {
+    "file": "L4MZ.HUF",
+    "size": 26228,
+    "sha256": "a9d2ebe33443742bd953d86671c9136d93607edf84660463881447f3f6588288"
+  },
+  {
+    "file": "L5MZ.HUF",
+    "size": 26228,
+    "sha256": "f1031d60e9c3e67b47163222d9a767494ed835b1230519fea31f693be614f052"
+  },
+  {
+    "file": "L6MZ.HUF",
+    "size": 26228,
+    "sha256": "3410be929c989a61d6f5dec96fb22c5b85a9508f2831fe1f964a432c286ff953"
+  },
+  {
+    "file": "L7MZ.HUF",
+    "size": 26228,
+    "sha256": "7570962f3e536687c617c730aff249526f7e3968b4ca26d582ce21675a8a50f9"
+  },
+  {
+    "file": "L8MZ.HUF",
+    "size": 26228,
+    "sha256": "361a8a4f6f9b7cc4f284bfa8f14580fca2c18485be9479bc3c062e8502b57818"
+  },
+  {
+    "file": "L9MZ.HUF",
+    "size": 26228,
+    "sha256": "f0a134a69093e69f27026d3d2f89f18ebea26a747e9453fc3611ff5643f02797"
+  },
+  {
+    "file": "LAMZ.HUF",
+    "size": 26228,
+    "sha256": "67df69eb85ac8c88d1bc68cc7dec191f3fc066129093cb1bb83ab02290aa0662"
+  },
+  {
+    "file": "LBMZ.HUF",
+    "size": 26228,
+    "sha256": "4785a26eeeb81c82cc4a1e71da0edfa4926c0e42dd34139b95fedab71c875201"
+  },
+  {
+    "file": "LZMZ.HUF",
+    "size": 26228,
+    "sha256": "a7e0b3b8d4b8b7ea7612380cc59f8b44b282bec773db8cdb06c0d38540928781"
+  },
+  {
+    "file": "MOONPIC.VHF",
+    "size": 64768,
+    "sha256": "cba9cffa055af801102130733f942cafcc39913ead87b106e1f0018c66f2a524"
+  },
+  {
+    "file": "PANEL.VHF",
+    "size": 64768,
+    "sha256": "3b568a070b8479e869a9b528ca0f5efae5b4ad048c6359244277c8a6edd3d33a"
+  },
+  {
+    "file": "PCMAP1.HUF",
+    "size": 26228,
+    "sha256": "d5feb834a977e968e59a31e44ff51e0ad84261db092fd36040de255c0b36c4f6"
+  },
+  {
+    "file": "PCMAP2.HUF",
+    "size": 26228,
+    "sha256": "a661ceb9b271c1be2c836b2fbfda9e161ed996b24b679b51b9e2a67bc28f4b2a"
+  },
+  {
+    "file": "PCMAP3.HUF",
+    "size": 26228,
+    "sha256": "d529baf08dc217787cefd437d8065c546189ad5f7a0bb1647e27fb844ef475e7"
+  },
+  {
+    "file": "PCMAP4.HUF",
+    "size": 26228,
+    "sha256": "98ee1327490b14b6949a8211e907dc6663fca8c42ce8bf2424265bc98729e2c9"
+  },
+  {
+    "file": "PCMAP5.HUF",
+    "size": 26228,
+    "sha256": "ebb7f95879c0dff69e474b84737e83b8157bcb0f732eba9b85e73146ee3120d0"
+  },
+  {
+    "file": "PCMAP6.HUF",
+    "size": 26228,
+    "sha256": "bc48103f80dee9c88c3852f4255f13e90b7e3c059ee3ee0a4f977e05a84acad7"
+  },
+  {
+    "file": "PLAYER1.EHF",
+    "size": 32000,
+    "sha256": "81b1312ad73100a2b0806e9bf927c71b8472d60eada4e9bdc7a7b809555c7be6"
+  },
+  {
+    "file": "PLAYER2.EHF",
+    "size": 32000,
+    "sha256": "e20965601e50d918c75081068f17c7b20200ad5c3c70fb7a4934bad09a2796bf"
+  },
+  {
+    "file": "TEAM_17.VHF",
+    "size": 64768,
+    "sha256": "7c1f0ed01dd1d395292850a434ffb267e79d327178705db5b0f5256f33698576"
+  },
+  {
+    "file": "TITLE.VHF",
+    "size": 64768,
+    "sha256": "145c4a52b3badf5833dd54063a7fa08f6284c013fb10c68a56e267fc0ebb2316"
+  },
+  {
+    "file": "WEAPONCL.EHF",
+    "size": 32000,
+    "sha256": "12cd06fad4f546e8459f2415188dd386d1330c15b17c08c40fadbfccf49e0536"
+  }
+]

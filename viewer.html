@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111617"><meta name="description" content="Explore the original Alien Breed DOS images, sounds, music and game data in your browser.">
+  <title>Alien Breed · Asset viewer</title>
+  <link rel="stylesheet" href="./src/viewer.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./viewer.html"><span class="brand-mark">AB<span>↗</span></span><span>ALIEN BREED<small>DOS / 1993</small></span></a>
+    <div class="source"><span class="led"></span><span id="source-label">CONNECTING</span></div>
+    <button id="choose-folder" class="button secondary">↗ Open game folder</button>
+    <input id="folder-input" type="file" webkitdirectory multiple hidden>
+  </header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">THE ORIGINAL FILES, EXPLORABLE</p><h1>Asset viewer<span>.</span></h1><p class="muted">A closer look at the images, sounds and data behind Alien Breed.</p></div><span class="edition">TEAM17 × A.V.M.<br><b>IBM PC EDITION</b></span></section>
+    <nav id="categories" class="categories" aria-label="Asset categories"></nav>
+    <div id="notice" class="notice" hidden role="status"></div>
+    <div class="workspace">
+      <aside class="browser">
+        <div class="search-box"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Find an asset…" aria-label="Find an asset"><kbd>/</kbd></div>
+        <div class="list-heading"><span id="list-label">ALL FILES</span><span id="list-count">0</span></div>
+        <div id="asset-list" class="asset-list" aria-label="Game assets"></div>
+        <div class="browser-footer"><span class="led"></span><span id="catalog-status">Waiting for files</span></div>
+      </aside>
+      <section class="inspector" aria-label="Asset preview">
+        <div class="asset-header"><div><p id="asset-kind" class="eyebrow">ASSET EXPLORER</p><h2 id="asset-name">Open your game folder</h2><p id="asset-path" class="muted">Original assets are read directly from your local files.</p></div><span id="format-badge" class="format-badge">LOCAL</span></div>
+        <div id="toolbar" class="toolbar" hidden>
+          <div id="image-controls" hidden>
+            <label>Zoom <select id="zoom"><option value="fit">Fit</option><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select></label>
+            <label><input id="grid" type="checkbox"> 16 px grid</label>
+            <label><input id="transparent" type="checkbox"> Color 0 transparent</label>
+          </div>
+          <button id="download-preview" class="button small" hidden>↓ Save PNG</button>
+          <button id="download-original" class="button small secondary">↓ Original file</button>
+        </div>
+        <div id="preview" class="preview"><div class="empty-state"><span class="empty-symbol">▧</span><h3>The archive starts here.</h3><p>During local development, assets load from <code>game/</code>.<br>Or open the folder containing your original game files.</p><button id="empty-open" class="button">Open game folder</button></div></div>
+        <div id="palette-controls" class="palette-controls" hidden><label>Preview palette <select id="palette-select"></select></label><p>EHF sheets have no embedded palette. This selection is a preview choice.</p></div>
+        <div id="palette" class="palette" hidden aria-label="Image palette"></div>
+        <div id="playback" class="playback" hidden>
+          <button id="play" class="button play-button">▶ Play</button><button id="stop" class="button secondary" aria-label="Stop playback">■</button>
+          <span id="elapsed" class="time">0:00</span><input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="Playback position"><span id="duration" class="time">0:00</span>
+          <label class="volume">Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+        </div>
+        <p id="preview-note" class="preview-note" hidden></p>
+        <dl id="metadata" class="metadata"></dl>
+        <details id="byte-inspector" class="byte-inspector" hidden>
+          <summary>Inspect bytes <span>HEX / ASCII</span></summary>
+          <div class="hex-controls"><label>Data <select id="byte-source"><option value="raw">Original</option><option value="decoded">Decompressed</option></select></label><label>Offset <input id="hex-offset" type="number" min="0" step="512" value="0"></label><button id="hex-prev" class="button small secondary">←</button><button id="hex-next" class="button small secondary">→</button><button id="download-decoded" class="button small secondary" hidden>↓ Decoded bytes</button></div>
+          <pre id="hex-output"></pre>
+        </details>
+      </section>
+    </div>
+    <footer class="footer"><span>ALIEN BREED / ASSET LAB <b>01</b></span><span>Original files stay local. <span class="keyboard-hint">↑ ↓ Browse · Esc Stop · / Search</span></span></footer>
+  </main>
+  <script type="module" src="./src/viewer.js"></script>
+</body>
+</html>

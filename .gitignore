@@ -1,0 +1,9 @@
+# Original game data: supply your own local copy.
+/game/
+/node_modules/
+/dist/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
