@@ -60,6 +60,43 @@ Tool caveats found so far:
 | The lag flag picks a faster movement table: `cs:[7B4A + flag*32 + dir*2]` | static | `1000:4CB5` |
 | Port reference: on a fast machine every frame is one 70 Hz retrace and the lag flag stays 0 (one 10.4 ms tick always fits inside 14.3 ms) | **inferred**, still to be checked at high cycles | — |
 
+## Files opened on the way into level 1
+
+Observed 2026-10-17 with an INT 21h AH=3Dh breakpoint, fresh boot, route: launch, type `000` at the
+passcode prompt, Enter through the title and both story pages. Names are as passed to DOS. Each name
+lives in one of three filename pools in `DS = 0x2041` (around `9700`, `9A00` and `AE00`). Every pool
+entry is the name followed by a 6-byte record whose meaning is still **unknown**.
+
+| # | File | Phase |
+| ---: | --- | --- |
+| 1 | `setup.dat` | startup |
+| 2 | `demo.dat` | startup (attract-mode input recording) |
+| 3 | `avmfm.bin` | startup (FM music driver; sets the 96 Hz PIT) |
+| 4 | `avm_sb.dat` | startup (compressed SoundBlaster driver) |
+| — | passcode prompt (three INT 21h AH=01h reads) | |
+| 5–29 | the 25 `sams\*.voc` samples, in table order at *live* `0E91:01BE` | after passcode |
+| 30 | `team_17.vhf` | intro |
+| 31 | `avm256.vhf` | intro |
+| 32 | `avm.voc` | intro |
+| 33 | `al_logo.vhf` | intro |
+| 34 | `font.vhf` | intro |
+| 35 | `adlib\title.cmf` | title music |
+| 36 | `title.vhf` | title |
+| — | story pages (no file opens) | |
+| 37 | `moonpic.vhf` | before the game |
+| 38 | `title.vhf` | reloaded |
+| 39 | `player1.ehf` | game start |
+| 40 | `player2.ehf` | game start |
+| 41 | `boom_new.ehf` | game start |
+| 42 | `alien03.ehf` | level 1 aliens |
+| 43–45 | `lbms\tea.256`, `lbms\teb.256`, `lbms\tean.256` | level 1 tile group E |
+| 46 | `lbmz.huf` | level 1 map |
+| 47 | `panel.vhf` | HUD |
+| 48 | `adlib\ingame.cmf` | in-game music |
+
+So level 1 uses map `LBMZ.HUF`, tile group E and alien set 03, not the first file of each series. The
+level-to-file mapping is not yet located in the code.
+
 ## Copy protection
 
 `1000:03D5` shows a manual-lookup prompt, picks an entry from `[B038] & 0x3F`, and reads three
