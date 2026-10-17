@@ -1,0 +1,29 @@
+{
+  "scenario": "demo-lbmz",
+  "description": "Attract-mode demo on level index 2 (LBMZ.HUF), replayed from DEMO.DAT through the port and compared with states observed in the original.",
+  "verify": "npm run verify",
+  "build": {
+    "ALIEN.EXE": "0787a2ca63e712ef1e2278fd5a78d9a0ea1e9ca0197398ab9e4cb684b067e0c7",
+    "DEMO.DAT": "local file; one input byte per frame, 1024 frames"
+  },
+  "emulator": {
+    "engine": "dosbox-automation 0.84.0-vc1 (f6d9b), dosbox-mcp bridge 0.1.1",
+    "cycles": "bridge config default (not visible through MCP); demo mode forces the lag flag to 0, so cycles do not change demo movement",
+    "recipe": "docs/port/scenarios/boot-to-level1.md, then leave the title idle until the attract demo starts (cs:[8716] = 2, [B0B2] = 2)"
+  },
+  "capture": {
+    "method": "execute breakpoint at live 20EA:12BC (frame end) with ignore_count; registers and memory read while paused; screenshot via screen_capture raw mode",
+    "fields": "P1 +00/+02/+06 at 1236:BE1C; camera [B432]/[B434] at 1236:B432; scroll state 1236:BD73/BD75/BD77/BD79"
+  },
+  "inputs": "DEMO.DAT bytes in order, one per stepFrame call, starting with the first of the two warm-up frames the level start runs",
+  "alignment": {
+    "kind": "fitted",
+    "note": "The frame of the first checkpoint was found by searching the port's run for the observed player state. The original's breakpoint counted 21 frame ends between the two observations, and the second checkpoint is checked at exactly +21 frames without further fitting."
+  },
+  "checkpoints": [
+    { "afterFrame": 28, "player": { "x": 1032, "y": 784, "frame": 12 }, "nextFrame": { "camera": { "x": 855, "y": 680 }, "tileCamera": { "x": 852, "y": 680 } }, "source": "demo run 2, breakpoint stop with camera 855,680; tile camera from the screenshot offset search (99.3% of sampled pixels exact)" },
+    { "afterFrame": 49, "player": { "x": 1056, "y": 730, "frame": 2 }, "nextFrame": { "camera": { "x": 879, "y": 642 }, "tileCamera": { "x": 879, "y": 645 } }, "source": "same run, 21 frame ends later; tile camera from the screenshot offset search (99.3% exact)" }
+  ],
+  "rules": "exact equality for positions, frames and cameras",
+  "limits": "The demo fires at frame 85; firing, aliens and projectiles are not implemented yet, so the strict replay stops there by design."
+}

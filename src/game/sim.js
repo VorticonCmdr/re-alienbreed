@@ -163,6 +163,156 @@ export function updatePlayer(state, player, input) {
   updateCentre(state, player);
 }
 
-// Filled in from the exact reading of 1000:4776 and 1000:5DAA-end; until then these paths are reported.
-function openDoors(state, player) { if (state.doors.some(d => d.kind) && player.keys > 0) state.pendingDoorCheck = true; }
-function updateCentre(state, player) { state.pendingCentre = true; }
+// 1000:4894: writes a whole type word (clearing occupancy); skipped within one cell of the top or left edge.
+// Returns whether it wrote, because the original's AL only changes when it does.
+function writeType(state, x, y, type) {
+  if (s16(x - 16) < 16 || s16(y - 16) < 16) return false;
+  state.types[cellAt(state, x, y)] = type; return true;
+}
+const worldCell = (state, x, y) => cellAt(state, x, y);
+
+// 1000:4776, before every player update: each closed door whose box contains the player opens; keys are only
+// checked once per frame, so one key can open several doors and the count can wrap to 0xFFFF (then unlimited).
+function openDoors(state, player) {
+  if (player.keys === 0 || state.doors.length === 0) return;
+  for (const door of state.doors) {
+    if (!door.kind) continue;
+    const { x: dx, y: dy } = door, px = s16(player.x), py = s16(player.y);
+    const vertical = door.kind === 1;
+    const inside = vertical ? px >= dx - 16 && px <= dx + 32 && py >= dy && py <= dy + 32 : px >= dx && px <= dx + 32 && py >= dy - 16 && py <= dy + 32;
+    if (!inside) continue;
+    door.kind = 0;
+    const second = vertical ? [dx, dy + 16] : [dx + 16, dy];
+    writeType(state, dx, dy, 0); startAnimation(state, vertical ? 0x8b74 : 0x8b58, worldCell(state, dx, dy));
+    writeType(state, ...second, 0); startAnimation(state, vertical ? 0x8b82 : 0x8b66, worldCell(state, ...second));
+    player.keys = u16(player.keys - 1); state.sounds.push(1);
+    player.doorsOpened = addBcd(player.doorsOpened, 1) & 0xffff; // +67 via DAA; the carry into +69 is overwritten later
+  }
+}
+
+// 1000:5DAA to 5ED6: centre-cell effects, occupancy and the safe position.
+function updateCentre(state, player) {
+  const px = player.x, py = player.y;
+  if (px - 16 < 0 || py - 16 < 0) { if (!state.skipSafe) { player.safeX = px; player.safeY = py; } return; }
+  const cell = cellAt(state, px, py), code = state.types[cell] & 0xff;
+  if (code === 0x16 && (state.frameCounter & 15) === 0) {
+    // The original tests the byte at DS:[cell offset + 0x6B] (high byte of the type word 53 cells further on),
+    // apparently meant as the player's +6B. Reproduced as read.
+    if (cell + 0x35 >= MAP_CELLS) unsupported(state, 'Floor-damage test past the map');
+    else if ((state.types[cell + 0x35] >> 8) === 0) { player.hurt = true; player.energy = u16(player.energy - 4); }
+    state.sounds.push(0x10);
+  }
+  if (code === 0x47 && state.timer104 > 0x4c && state.timer104 < 0x54) { player.hurt = true; player.energy = 0; }
+  const masks = { 0x0e: 0x0b, 0x0f: 0x0d, 0x10: 0x07, 0x11: 0x0e, 0x38: 0x09, 0x39: 0x05, 0x3a: 0x06, 0x3b: 0x0a };
+  if (code in masks) { player.moveMask &= masks[code]; state.skipSafe = true; }
+  if (code === 0x3d) state.objectiveTriggered = true;
+  if (player.cell !== cell) {
+    if (player.cell >= 0 && player.cell <= 0x2d00) state.types[player.cell] &= 0x7fff;
+    if (cell <= 0x2d00) { state.types[cell] |= 0x8000; player.cell = cell; }
+  }
+  if (!state.skipSafe) { player.safeX = px; player.safeY = py; }
+}
+
+// Level start, 1000:1BB7 onwards. Scan points at world column/row 0 make the original read unrelated memory;
+// they are skipped here (LBMZ's resulting start position matches the original, docs/port/evidence.md).
+function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; x <= 0x770; x += 16) yield [x, y]; }
+// Tileset id per level, byte table cs:4021 in the executable.
+export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
+
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved }) {
+  const state = {
+    tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
+    camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
+    animations: Array(79).fill(null), doors: [], sounds: [], diagnostics: [], playerCount: 1, shareCredits: false,
+    lasersHit: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
+  };
+  // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
+  const codeAt = (x, y) => {
+    if (y - 16 < 0) { unsupported(state, `Level-start probe above the map at (${x}, ${y})`); return -1; }
+    return state.types[cellAt(state, x, y)] & 0xff;
+  };
+  const find = code => { for (const [x, y] of scanPoints()) if (codeAt(x, y) === code) return { x, y }; return { x: 0x780, y: 0x600, missing: true }; };
+  state.generators = [0x2a, 0x2b, 0x2c, 0x2d].map(find); state.objective = find(0x3d); state.marker33 = find(0x33);
+  for (const [x, y] of scanPoints()) { // 1000:403A door list
+    if (codeAt(x, y) !== 3 || (y - 16 >= 16 && codeAt(x, y - 16) === 3) || (x - 16 >= 16 && codeAt(x - 16, y) === 3)) continue;
+    if (level === 0 && x < 0x3c0) continue;
+    if (state.doors.length >= 0xc0) { unsupported(state, 'Door list overflow'); break; }
+    state.doors.push({ x, y, kind: codeAt(x + 16, y) === 3 ? 2 : 1 });
+  }
+  convertDecor(state, tileset, codeAt);
+  const start = find(0x35); // 1000:3BA6; the camera stays at 0 if there is no marker
+  const camX = start.missing ? 0 : Math.max(0, s16(start.x - 0xa0)), camY = start.missing ? 0 : Math.max(0, s16(start.y - 0x58));
+  state.camera = { x: camX, y: camY }; state.viewCamera = { ...state.camera };
+  const stats = saved || { energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, doorsOpened: 0 };
+  const player = {
+    x: s16(camX + 0xb0), y: s16(camY + 0x68), frame: 0x0b, animBase: 0x0b, walk: 0, facing: 1, state: 1, height: 0,
+    ...stats, fireRepeat: 0, conveyor: 0, moveMask: 15, onIntex: 0, hurt: false, invulnerable: 0, cell: -1,
+  };
+  player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
+  if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
+  state.players = [player];
+  state.spawnPoints = [[0x28, 1], [0x29, 2], [0x34, 3]].flatMap(([code, type]) => { // 1000:48D3
+    const points = []; for (let y = 8; y <= 0x5f8; y += 16) for (let x = 8; x <= 0x778; x += 16) if (x >= 16 && y >= 16 && codeAt(x, y) === code) points.push({ x, y, type, cooldown: 0 });
+    return points;
+  }).slice(0, 0x80);
+  return state;
+}
+
+// 1000:3D10 for the tileset of this level. `al` models the register the original keeps between tests.
+function convertDecor(state, tileset, codeAt) {
+  const anim = (list, x, y) => { startAnimation(state, list, cellAt(state, x, y)); return list & 0xff; };
+  for (const [x, y] of scanPoints()) {
+    let al = codeAt(x, y);
+    if (al === 0x0f && tileset === 5) { if (codeAt(x, y - 16) !== 0x0f) { anim(0x838c, x, y - 16); anim(0x83de, x, y); } continue; }
+    if ((al === 0x1c && tileset === 5) || al === 0x1f) { anim(0x81c4, x, y); anim(0x8236, x + 16, y); anim(0x82a8, x, y + 16); anim(0x831a, x + 16, y + 16); continue; }
+    if (al === 0x1d) { if (tileset === 1) anim(0x8430, x, y); else if (tileset === 4) anim(0x8472, x, y); continue; }
+    if (al === 0x1a && tileset === 1) { for (const [l, dx, dy] of [[0x872c, 1, 0], [0x87fe, 2, 0], [0x88d0, 1, 1], [0x89a2, 2, 1]]) { anim(l, x + dx * 16, y + dy * 16); writeType(state, x + dx * 16, y + dy * 16, 0x47); } state.timer104 = 0; continue; }
+    if (al === 0x1e && tileset === 2) { for (const [l, dx] of [[0x86f0, 1], [0x8704, 2], [0x8718, 3]]) { anim(l, x + dx * 16, y); writeType(state, x + dx * 16, y, 0x44); } continue; }
+    const pairs = { 1: [0x8688, 0x86a2], 3: [0x86bc, 0x86d6], 4: [0x864c, 0x8674] };
+    const place = (lists, type) => lists.forEach((list, i) => { al = anim(list, x, y + 16 * i); if (writeType(state, x, y + 16 * i, type)) al = type; });
+    if (al === 0x26) {
+      al = codeAt(x, y - 16); if (al === 0x26) continue;
+      if (tileset === 4 && state.level === 2) place([0x864c, 0x8660, 0x8674], 0x40);
+      else if (pairs[tileset]) place(pairs[tileset], 0x40);
+    }
+    if (al === 0x2e) {
+      al = codeAt(x, y - 16); if (al === 0x26) continue;
+      if (pairs[tileset]) { place(pairs[tileset], 0x64); continue; }
+    }
+    if (al === 0x18 && tileset === 5) {
+      writeType(state, x, y, 0x01);
+      for (const [l, dy] of [[0x84de, 1], [0x8558, 2], [0x85d2, 3]]) { anim(l, x, y + dy * 16); writeType(state, x, y + dy * 16, 0x46); }
+      state.timer60 = 0;
+    }
+  }
+}
+
+// 1000:7BAE, one player: up to 3 one-pixel steps per axis (4 on a lag frame), with a dead zone.
+export function followCamera(state) {
+  const target = state.players[0], camera = state.camera, steps = state.tables.moveSteps[state.lag * 16 + 3];
+  const maxX = ((MAP_WIDTH + 1) * 16 - 0x140) & 0xffff, maxY = (96 * 16 - 0xb0) & 0xffff;
+  for (let i = 0; i < steps; i++) {
+    let left = true;
+    if (s16(target.x) >= s16(camera.x + 0x90)) { if ((camera.x & 0xffff) < maxX) camera.x = s16(camera.x + 1); else left = false; }
+    if (left && s16(target.x) <= s16(camera.x + 0xb0) && s16(camera.x) > 0x10) camera.x = s16(camera.x - 1);
+    let up = true;
+    if (s16(target.y) >= s16(camera.y + 0x58)) { if ((camera.y & 0xffff) < maxY) camera.y = s16(camera.y + 1); else up = false; }
+    if (up && s16(target.y) <= s16(camera.y + 0x68) && s16(camera.y) > 0) camera.y = s16(camera.y - 1);
+  }
+}
+
+// One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera
+// from before this frame's follow, sprites at the current camera, objects as updated in the previous frame.
+export function stepFrame(state, input) {
+  state.sounds = [];
+  if (s16(state.burning) > 0) state.burning--;
+  state.frameCounter = u16(state.frameCounter + 1);
+  const tileCamera = { ...state.camera };
+  followCamera(state); tickAnimations(state);
+  state.view = { tileCamera, spriteCamera: { ...state.camera }, players: state.players.map(p => ({ x: p.x, y: p.y, height: p.height, frame: p.frame })) };
+  state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
+  if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
+  for (const player of state.players) updatePlayer(state, player, input);
+  for (const player of state.players) if (s16(player.energy) <= 0) unsupported(state, 'Player death');
+  state.frame++;
+}
