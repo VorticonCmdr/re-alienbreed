@@ -97,6 +97,26 @@ entry is the name followed by a 6-byte record whose meaning is still **unknown**
 So level 1 uses map `LBMZ.HUF`, tile group E and alien set 03, not the first file of each series. The
 level-to-file mapping is not yet located in the code.
 
+## Level table and map format
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| Level index `[B0B2]` selects the map record through a 19-entry word table at `2041:957D`. Records are `{far pointer to name, 4 bytes}` followed by the name. Index → map: 0 LZMZ, 1 L0MZ, 2 LBMZ, 3 L3MZ, 4 L4MZ, 5 L5MZ, 6 PCMAP4, 7 L6MZ, 8 L7MZ, 9 L8MZ, 10 L9MZ, 11 PCMAP3, 12 PCMAP5, 13 LAMZ, 14 L1MZ, 15 PCMAP2, 16 PCMAP1, 17 L2MZ, 18 PCMAP6 | static | `1000:1B70` |
+| First playable level and the attract demo both use index 2 (`LBMZ.HUF`) | observed (`[B0B2] = 2` after both inits; demo flag `cs:[8716] = 2` during the second) | — |
+| The loader decompresses the file into segment `[B411]` (observed `0x3811`), copies the first 0x2D00 words (23,040 bytes) to `2EF5:635A`, then calls the level initialiser `2EF5:0000`. The load buffer is reused soon afterwards | static + observed | `1000:1B70`–`1BB7` |
+| The map is 120 × 96 cells of **big-endian** words. The initialiser writes `(w & 0xFC00) >> 10` (6-bit type) as a word array at `2041:0000` and replaces each cell in place with `(w & 0x1FF) << 4` (tile index as a 256-byte paragraph offset). Bit 9 is unused | static; tile pass observed exact for 77 of 96 rows ~1 s into a demo run (the remaining rows contain cells changed during play, not yet identified) | `2EF5:0000`–`0071` |
+| `LBMZ.HUF` decompresses with `src/lzhuf.js` to 26,228 bytes; the remaining 3,188 bytes after the map are not yet explained | static (length) | — |
+| Tiles are 16 × 16 blocks cut from the 320 × 200 `.256` sheets, 20 per row and 12 rows per sheet: tiles 0–239 from `T?A`, 240–479 from `T?B`. LBMZ uses at most tile 470. The role of `T?AN` is **unknown** | approximate (visual render matches the original's look; no pixel comparison yet) | — |
+
+## Demo recording and playback
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| `cs:[8716]` is the demo mode: 0 = play, 1 = record, 2 = playback (observed during the attract demo). Recording appends the per-frame input byte `[B423]` to `cs:[8719 + n]` and writes the file after 0x400 frames | static (record path), observed (mode 2) | `1000:391D`–`3967` |
+| `DEMO.DAT` (1,024 bytes) is read at startup; it is therefore a one-byte-per-frame input recording for 1,024 frames | inferred (size, open order) | — |
+| The lag flag `[818A]` is forced to 0 while demo mode is non-zero, so demo movement does not depend on host speed | static | `2EF5:12DA` |
+| Low 4 bits of `[B423]` select the movement direction | static | `1000:4CAA` |
+
 ## Copy protection
 
 `1000:03D5` shows a manual-lookup prompt, picks an entry from `[B038] & 0x3F`, and reads three
