@@ -19,14 +19,22 @@ export function decodeMap(bytes) {
   return { tiles, types, extra: bytes.slice(MAP_CELLS * 2) };
 }
 
-// Cuts 16x16 tiles from 320x200 byte-per-pixel sheets: 20 per row, 12 rows, 240 per sheet, in sheet order.
+// Cuts 16x16 tiles from the level's three 320x200 byte-per-pixel sheets like 1000:19F2-1AE0: 20 per row,
+// 12 rows from T?A (0-239) and T?B (240-479), 8 rows from T?AN (480-639).
+export const SHEET_TILE_ROWS = [12, 12, 8];
 export function buildTileStore(sheets) {
-  const store = new Uint8Array(sheets.length * 240 * 256);
+  const store = new Uint8Array(640 * 256);
+  let tile = 0;
   sheets.forEach((sheet, s) => {
-    for (let t = 0; t < 240; t++) for (let y = 0; y < TILE; y++) {
+    for (let t = 0; t < SHEET_TILE_ROWS[s] * 20; t++, tile++) for (let y = 0; y < TILE; y++) {
       const source = ((t / 20 | 0) * TILE + y) * 320 + (t % 20) * TILE;
-      store.set(sheet.pixels.subarray(source, source + TILE), (s * 240 + t) * 256 + y * TILE);
+      store.set(sheet.pixels.subarray(source, source + TILE), tile * 256 + y * TILE);
     }
   });
   return store;
+}
+
+// The three tile-sheet names per level: table at 2041:9862 + level * 6 of record pointers (name at record + 8).
+export function levelTileSheetNames(exe, level) {
+  return [0, 1, 2].map(i => exe.string(DATA_SEGMENT, exe.u16(DATA_SEGMENT, 0x9862 + level * 6 + 2 * i) + 8));
 }
