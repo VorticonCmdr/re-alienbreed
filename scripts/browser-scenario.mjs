@@ -32,6 +32,9 @@ try {
 
   const pixels = await page.evaluate(() => { const fb = window.__alienBreed.framebuffer; let lit = 0; for (let i = 0; i < 176 * 320; i++) if (fb[i]) lit++; return lit; });
   check('the playfield renders map tiles', () => assert.ok(pixels > 176 * 320 * 0.5, `lit ${pixels}`));
+  const panel = await page.evaluate(() => { const fb = window.__alienBreed.framebuffer; let bank = 0; for (let i = 176 * 320; i < 196 * 320; i++) if (fb[i] >= 0xf0) bank++; return { bank, energyRow: Array.from(fb.subarray(176 * 320 + 32, 176 * 320 + 96)) }; });
+  check('the status panel is drawn from PANEL.VHF in the panel bank', () => assert.ok(panel.bank > 20 * 320 * 0.9, `panel-bank pixels ${panel.bank}`));
+  check('the energy bar is full at the start', () => assert.ok(panel.energyRow.every(v => v >= 0xf0)));
 
   const ammoBefore = await page.evaluate(() => window.__alienBreed.state.players[0].ammo);
   await page.keyboard.down('KeyZ'); await page.waitForTimeout(40); await page.keyboard.up('KeyZ');

@@ -2,7 +2,8 @@
 import { assetSource, entriesFromFileList } from './assets.js';
 import { openExe } from './exe.js';
 import { decodeMap, buildTileStore, levelMapNames, levelTileSheetNames } from './level.js';
-import { buildGamePalette, dacToRgb, alienSheetName } from './palette.js';
+import { buildGamePalette, dacToRgb, alienSheetName, redAlertPalette } from './palette.js';
+import { createHud, drawHud, blitPanel } from './hud.js';
 import { createFramebuffer, drawMap, drawObjects, drawShots, toRgba, SCREEN_WIDTH } from './render.js';
 import { frameDescriptor, drawSprite } from './sprites.js';
 import { readTables, startLevel, levelTileset, stepFrame, UnsupportedPath } from './sim.js';
@@ -31,28 +32,31 @@ async function load(source) {
   const sheetBytes = await Promise.all(levelTileSheetNames(exe, LEVEL).map(name => source.read(name)));
   const map = decodeMap(decompressLzhuf(await source.read(levelMapNames(exe)[LEVEL])));
   const tileStore = buildTileStore(sheetBytes.map(bytes => decodeVga(bytes)));
-  const palette = dacToRgb(buildGamePalette(exe, sheetBytes[1], LEVEL));
+  const dac = buildGamePalette(exe, sheetBytes[1], LEVEL), palette = dacToRgb(dac), redPalette = dacToRgb(redAlertPalette(dac));
   const sprites = async name => decodePlanar(decompressLzhuf(await source.read(name))).pixels;
   // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
   const sheets = { 0xb409: [await sprites('PLAYER1.EHF'), await sprites('PLAYER2.EHF')], 0xadd2: [await sprites('BOOM_NEW.EHF')], 0xb0b4: [await sprites(alienSheetName(exe, LEVEL))] };
-  const panel = decodeVga(decompressLzhuf(await source.read('PANEL.VHF')));
+  const hud = createHud(decodeVga(decompressLzhuf(await source.read('PANEL.VHF'))).pixels);
   keyboard = createKeyboard(bindingsFromSetup(await source.read('SETUP.DAT')));
   const state = startLevel({ tables, map, level: LEVEL, tileset: levelTileset(exe, LEVEL), strict: !$('preview').checked });
   const frames = new Map(), descriptor = n => { if (!frames.has(n)) frames.set(n, frameDescriptor(exe, n)); return frames.get(n); };
-  game = { exe, tables, state, tileStore, palette, sheets, panel, descriptor, framebuffer: createFramebuffer() };
+  game = { exe, tables, state, tileStore, palette, redPalette, sheets, hud, descriptor, framebuffer: createFramebuffer() };
   // The level start runs two complete frames before the main loop (1000:1B70, CALL 37D6 twice).
   stepFrame(state, 0); stepFrame(state, 0);
 }
 
 function render() {
-  const { state, framebuffer: fb, tileStore, sheets, panel, descriptor, tables } = game, view = state.view;
+  const { state, framebuffer: fb, tileStore, sheets, hud, descriptor, tables } = game, view = state.view;
   fb.fill(0);
   drawMap(fb, state, tileStore, view.tileCamera.x - 16, view.tileCamera.y, 0, PLAYFIELD);
   drawObjects(fb, view, sheets, descriptor, drawSprite, PLAYFIELD);
   drawShots(fb, view, tables, sheets, descriptor, drawSprite, PLAYFIELD);
-  // Panel rows 2..21 of PANEL.VHF at screen rows 176..195, recoloured to 0xF0 | p (1000:20C3, 18B2:3BB2).
-  for (let y = 0; y < 20; y++) for (let x = 0; x < SCREEN_WIDTH; x++) fb[(PLAYFIELD + y) * SCREEN_WIDTH + x] = 0xf0 | (panel.pixels[(y + 2) * 320 + x] & 15);
-  image.data.set(toRgba(fb, game.palette)); context.putImageData(image, 0, 0);
+  if (view.timerDigits !== null) [view.timerDigits >> 4, view.timerDigits & 15].forEach((digit, i) => {
+    const d = descriptor(0xd3 + digit); drawSprite(fb, d, sheets[d.sheetVariable], 32 + 16 * i + d.adjustX, 32 + d.adjustY, false, 0, PLAYFIELD);
+  });
+  for (const p of state.players) if (p.alive) drawHud(hud, p);
+  blitPanel(fb, hud);
+  image.data.set(toRgba(fb, state.redAlert ? game.redPalette : game.palette)); context.putImageData(image, 0, 0);
   const p = state.players[0];
   const skipped = [...new Set(state.diagnostics.map(d => d.message.replace(/ at .*| \(.*/, '')))];
   $('preview-banner').hidden = state.strict;
@@ -64,9 +68,22 @@ function tick(now) {
   if (!running) return;
   accumulator = Math.min(accumulator + now - last, FRAME_MS * 8); last = now;
   try {
-    while (accumulator >= FRAME_MS) { stepFrame(game.state, keyboard.inputByte()); accumulator -= FRAME_MS; }
-    render(); requestAnimationFrame(tick);
+    while (accumulator >= FRAME_MS && !game.state.levelOver) { stepFrame(game.state, keyboard.inputByte(), timerTicks()); accumulator -= FRAME_MS; }
+    render();
+    if (game.state.levelOver) { finish(game.state.levelOver); return; }
+    requestAnimationFrame(tick);
   } catch (error) { render(); showDiagnostic(error); }
+}
+
+// INT 8 ticks per game frame: a deterministic 96 Hz phase against 70.086 Hz frames (approximate; the original's
+// interrupt phase relative to its frame loop is not modelled).
+let tickPhase = 0;
+function timerTicks() { tickPhase += 96 / 70.086; const n = Math.floor(tickPhase); tickPhase -= n; return n; }
+
+function finish(result) {
+  running = false;
+  const box = $('diagnostic'); box.hidden = false;
+  box.textContent = result === 'complete' ? 'Level complete. Loading the next level is not implemented yet.' : 'Game over.';
 }
 
 function start() {

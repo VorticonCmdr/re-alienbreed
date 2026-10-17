@@ -28,6 +28,7 @@ export function readTables(exe) {
     shotOffset: Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, 0x5add + 4 * i), exe.s16(CODE, 0x5add + 4 * i + 2)]),
     spread: [0x5a65, 0x5aa1].map(t => Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, t + 4 * i), exe.s16(CODE, t + 4 * i + 2)])),
     bounceDirection: Array.from({ length: 16 }, (_, i) => exe.u8(CODE, 0x5672 + i)),
+    selfDestructSeconds: Array.from({ length: 19 }, (_, i) => exe.u8(CODE, 0x5fc9 + i)), // BCD, 1000:5F94
     // Shot frames for 1000:568E: [type - 2][direction], two alternating rows for type 6, and type 5's sequence.
     shotFrames: Array.from({ length: 6 }, (_, t) => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, 0x570c + 32 * t + 2 * i))),
     shotPhaseFrames: [0x57cc, 0x57ec].map(o => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, o + 2 * i))),
@@ -67,7 +68,7 @@ function wallTest(state, x, y, ownCell, alien = false) {
 }
 
 // Codes the per-probe handler 1000:61BB acts on but this port does not implement yet. Any other code has no effect there.
-const UNSUPPORTED_PROBE_CODES = new Set([0x15]);
+const UNSUPPORTED_PROBE_CODES = new Set();
 const PICKUPS = {
   0x04: { sound: 3, tile: 0x07a, anim: 0x8a9a, animOn1415: false, apply: p => { p.keys = u16(p.keys + 1); } },
   0x05: { sound: 3, tile: 0x155, anim: 0x8ae6, animOn1415: true, apply: (p, s) => { p.energy = u16(p.energy + 0x20); if (s16(p.energy) > 0x40) p.energy = 0x40; s.sounds.push(3); } },
@@ -105,6 +106,7 @@ function probeEffects(state, player, x, y) {
   else if (code === 0x46) { if (s16(state.timer60) > 0x28 && (state.timer60 & 3) === 0) hurt(state, player, 1); }
   else if (code === 0x14) { state.skipSafe = true; player.energy = u16(player.energy - 8); state.sounds.push(0x0f); }
   else if (code === 0x17) player.onIntex = 0xffff;
+  else if (code === 0x15) startSelfDestruct(state);
   else if (code === 0x2f) { player.conveyor |= 2; state.skipSafe = true; }
   else if (code === 0x27) { player.conveyor |= 1; state.skipSafe = true; }
   else if (code === 0x3f) { player.conveyor |= 8; state.skipSafe = true; }
@@ -119,7 +121,7 @@ function hurt(state, player, amount) { player.hurt = true; player.energy = u16(p
 // 1000:6286: the exit only counts on some levels or once the self-destruct or boss has started.
 function exitTouched(state) {
   const l = state.level;
-  if ([1, 11, 15, 16, 4, 7, 9, 10].includes(l) || (l === 3 && state.lasersHit >= 3) || state.bossActive || state.selfDestruct) unsupported(state, 'Level exit');
+  if ([1, 11, 15, 16, 4, 7, 9, 10].includes(l) || (l === 3 && state.lasersHit >= 3) || state.bossActive || state.selfDestruct) state.exitTaken = true;
 }
 
 function unsupported(state, message) {
@@ -157,7 +159,7 @@ function moveClamped(state, player, step, bits) {
 
 // Player update 1000:5B44 up to the end of the corner probes (5DAA). The remainder is updateCentre().
 export function updatePlayer(state, player, input) {
-  if (player.state === 2) return;
+  if (player.type === 2) return; // dying (1000:5B49)
   state.firing = false;
   openDoors(state, player);
   if (input & INPUT.FIRE) firePlayer(state, player);
@@ -257,6 +259,8 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
     rng: seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
+    generatorFlags: [false, false, false, false], generatorsDestroyed: 0, selfDestruct: false, seconds: 0, redAlert: false,
+    endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 10, levelTenTimer: 0x0f, music: 'ingame',
   };
   state.report = message => unsupported(state, message);
   // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
@@ -284,7 +288,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
   player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
   if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
   // Player record set up like 7376 without clearing the player fields (74FC is not fully read yet).
-  Object.assign(player, { active: true, flags0A: 0x80, flags0B: 0x40, type: 1, script: tables.scriptStart(1), z: 0, oldZ: 0, delay: 0, priority: 8, ticks: 0 });
+  Object.assign(player, { alive: true, active: true, flags0A: 0x80, flags0B: 0x40, type: 1, script: tables.scriptStart(1), z: 0, oldZ: 0, delay: 0, priority: 8, ticks: 0 });
   state.objects[0] = player; state.objectCount = 1; state.players = [player];
   state.spawnPoints = [[0x28, 1], [0x29, 2], [0x34, 3]].flatMap(([code, type]) => { // 1000:48D3
     const points = []; for (let y = 8; y <= 0x5f8; y += 16) for (let x = 8; x <= 0x778; x += 16) if (x >= 16 && y >= 16 && codeAt(x, y) === code) points.push({ x, y, type, cooldown: 0 });
@@ -338,28 +342,37 @@ export function followCamera(state) {
 
 // One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera
 // from before this frame's follow, sprites at the current camera, objects as updated in the previous frame.
-export function stepFrame(state, input) {
+export function stepFrame(state, input, ticks = 0) {
+  if (state.levelOver) throw new Error('stepFrame after the level ended');
   state.sounds = [];
+  for (let i = 0; i < ticks; i++) timerTick(state); // INT 8 work, applied at the frame start (its exact phase is approximate)
+  if (s16(state.levelTenTimer) < 0 && state.level === 10 && !state.endSequence) startSelfDestruct(state);
   if (s16(state.burning) > 0) state.burning--;
   state.frameCounter = u16(state.frameCounter + 1);
   const tileCamera = { ...state.camera };
   followCamera(state); tickAnimations(state);
   const objects = drawList(state); // 1000:6764 draws before this frame's shots and scripts
   updateShots(state);
+  if (state.endSequence) endSequenceFrame(state);
   for (const r of state.objects) if (r.active) { r.oldX = r.x; r.oldY = r.y; r.oldZ = r.z; } // 1000:65FC
   runScripts(state);
   state.view = {
     tileCamera, spriteCamera: { ...state.camera }, objects, frameCounter: state.frameCounter, shotPhase: state.shotPhase,
+    timerDigits: state.selfDestruct ? state.seconds : null, // 1000:3AED, drawn after the shots
     shots: state.shots.filter(s => s.type).map(s => ({ type: s.type, x: s.x, y: s.y, direction: s.direction, counter: s.counter })),
   };
   state.shotPhase = (state.frameCounter >> 2) & 1; // cs:578C refreshed after 52F4 for the next frame's type-6 shots
   state.atFlip = { objectCount: state.objectCount }; // what the original holds at its frame flip (for comparisons)
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
-  for (const player of state.players) updatePlayer(state, player, input);
-  for (const player of state.players) if (s16(player.energy) <= 0) unsupported(state, 'Player death');
-  updateAliens(state);
+  if (!state.endSequence) for (const player of state.players) if (player.alive) updatePlayer(state, player, input);
+  for (const player of state.players) if (player.alive && s16(player.energy) <= 0) killPlayer(state, player);
+  if (!state.endSequence) updateAliens(state);
   state.frame++;
+  // 1000:34E6 at the top of the next pass: exit taken, nobody left, or the end sequence finished.
+  if (state.exitTaken) state.levelOver = 'complete';
+  else if (!state.players.some(p => p.alive)) state.levelOver = 'gameover';
+  else if (s16(state.endSequence) >= 0x8c) state.levelOver = 'gameover';
 }
 
 // ---- Shots (1000:5B58 player fire, 5928 creation, 52F4 per-frame update) ----
@@ -425,7 +438,8 @@ export function updateShots(state) {
     shootDoors(state, shot.x, s16(shot.y + 0x18), t.shotDamage[shot.type]);
     const index = cellAt(state, shot.x, shot.y + 0x10), code = state.types[index] & 0xff;
     if (WALLS.has(code)) {
-      if (code >= 0x2a && code <= 0x2d) unsupported(state, 'Generator hit');
+      if (code >= 0x2a && code <= 0x2d) hitGenerator(state, code - 0x2a);
+      if (s16(state.generatorsDestroyed) >= 4) startSelfDestruct(state);
       if (shot.type === 3 || shot.type === 7) unsupported(state, 'Bouncing shot');
       shot.type = 0; createEffect(state, 5, shot.x, s16(shot.y + 8));
       continue;
@@ -434,10 +448,60 @@ export function updateShots(state) {
   }
 }
 
+// 1000:5286 through the shot wall handler: flag, count, 2x2 destroyed tiles, explosion object type 9, sound 0x0E.
+function hitGenerator(state, index) {
+  if (state.generatorFlags[index]) return;
+  state.generatorFlags[index] = true; state.generatorsDestroyed++;
+  const { x, y } = state.generators[index];
+  [[0x8b90, x, y + 16], [0x8b96, x + 16, y + 16], [0x8b9c, x, y + 32], [0x8ba2, x + 16, y + 32]].forEach(([list, cx, cy]) => startAnimation(state, list, cellAt(state, cx, cy)));
+  createEffect(state, 9, s16(x + 16), s16(y + 24)); state.sounds.push(0x0e);
+}
+
+// 1000:5F94: once per level; red palette except on levels 14/15, BCD seconds from cs:5FC9, alarm music.
+export function startSelfDestruct(state) {
+  if (state.selfDestruct) return;
+  if (state.level !== 14 && state.level !== 15) state.redAlert = true;
+  state.selfDestruct = true; state.seconds = state.tables.selfDestructSeconds[state.level]; state.music = 'alarmed';
+}
+// The INT 8 handler's once-per-"second" work (1000:7872, carry of [AD4C] += 0x334). Ticks are an explicit input.
+function timerTick(state) {
+  state.tickAccumulator += 0x334;
+  if (state.tickAccumulator <= 0xffff) return;
+  state.tickAccumulator &= 0xffff;
+  state.secondCycle--; if (state.secondCycle < 0) state.secondCycle = 10;
+  if (state.selfDestruct) {
+    if (state.secondCycle === 0) state.sounds.push(0x0b);
+    state.sounds.push(0x16);
+    state.seconds = bcdDecrement(state.seconds);
+    if (state.seconds === 0) { state.endSequence = 1; state.selfDestruct = false; }
+  }
+  state.levelTenTimer = s16(state.levelTenTimer - 1);
+}
+const bcdDecrement = v => { let low = (v & 15) - 1, high = v >> 4; if (low < 0) { low += 10; high--; } return ((high & 15) << 4 | low) & 0xff; };
+
+// 1000:3AED while [92F2] != 0: random explosions over the screen for 139 frames.
+function endSequenceFrame(state) {
+  state.endSequence++;
+  if (s16(random(state)) >= 0x800) return;
+  let x, y; do x = random(state) & 0x1ff; while (s16(x) > 0x140); x = s16(x + state.camera.x);
+  do y = random(state) & 0xff; while (y > 0xc8); y = s16(y + state.camera.y);
+  const r = random(state) & 1; state.sounds.push(0x0d + r); createEffect(state, 8 + r, x, y);
+}
+
 // Impacts, explosions and death animations are objects driven by their scripts.
 function createEffect(state, type, x, y) { return allocObject(state, type, x, y); }
 
 // ---- Aliens (1000:4A66, once per frame after the player updates) ----
+
+// Death check after the player updates (1000:3A00): refill, lose a life, dying script; the last life ends the game.
+function killPlayer(state, player) {
+  player.energy = 0x40; player.lives = (player.lives - 1) & 0xff;
+  setObjectType(state, player, 2); player.invulnerable = 0x4b;
+  if (player.lives === 0xff) {
+    player.alive = false; state.playerCount--; setObjectType(state, player, 3);
+    if (player.cell >= 0 && player.cell <= 0x2d00) state.types[player.cell] &= 0x7fff;
+  }
+}
 
 const random = state => nextRandom(state.rng);
 

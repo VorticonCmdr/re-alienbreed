@@ -1,6 +1,6 @@
 # Port status
 
-Updated 2026-10-18 (aliens and firing). Evidence for each claim: [evidence.md](evidence.md). Scenarios: [scenarios/](scenarios/).
+Updated 2026-10-18 (level 1 completable). Evidence for each claim: [evidence.md](evidence.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
 
@@ -17,8 +17,11 @@ extra lives and credits, takes damage from hazard cells, and opens doors with ke
 shot speeds and start offsets; impacts, alien eggs, alien deaths and explosions run the original object scripts read
 from the executable. Aliens spawn, hatch, wander or chase with the original random generator, collide with walls and
 each other, hurt the player on contact and die from shots. The camera follows with the original's dead zone and step
-limits.
-The bottom panel is drawn from `PANEL.VHF`; its live values are not drawn yet (they are shown in text below the canvas).
+limits. Losing all energy plays the original dying script and respawns at the last safe position with temporary
+invulnerability; losing the last life ends the game. Shooting the four generators starts the self-destruct: red
+palette, the countdown digits on screen and a timer driven by explicit INT 8 ticks; reaching the exit pad at the start
+completes the level, and running out of time ends the game after the original's explosion sequence. The status panel
+shows energy, lives, clips, bullets and keys as the original draws them.
 
 **Strict mode (default)** stops with a diagnostic as soon as the original would do something not reproduced yet.
 **Preview mode** (checkbox) skips such behaviour instead and lists what it skipped; it is not faithful and never counts
@@ -46,10 +49,12 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): the self-destruct trigger cell 0x15, player death, generator hits and the
-  self-destruct, bouncing shots (weapons 3 and 7), destructible walls, the Intex terminal, the exit, level 16/17
-  objectives, object hooks (bosses), child objects, two players. Not present at all yet: sound and music, the HUD
-  values, menus, levels other than index 2.
+- Not implemented (strict stop): bouncing shots (weapons 3 and 7), destructible walls (0x12/0x13), the Intex terminal
+  and shop, level 16/17 objectives, object hooks (bosses), child objects, two players. Not present at all yet: sound
+  and music, menus and the title, loading the next level after an exit, the game-over picture, levels other than index 2.
+- INT 8 work (the self-destruct seconds) is applied at the start of a frame with a deterministic 96 Hz : 70.086 Hz
+  tick schedule in the browser; the original's interrupt phase within a frame is not modelled. The tick count per
+  frame is an explicit simulation input, so tests and replays can supply the original's values.
 - The original's spawn scan creates 5 phantom spawn records from reads above the map; they can never spawn and are
   omitted. The level-start door and decor scans have the same out-of-map reads; the port skips those points.
 - The level-start scans skip probe points on world row/column 0, where the original reads unrelated memory.
@@ -59,6 +64,6 @@ Verified levels, from strongest to weakest:
 
 ## Next milestone
 
-Finish level 1: hazards and player death, generator destruction and the self-destruct countdown, the exit, and the
-HUD values on the panel. Capture further original checkpoints beyond frame 500 (more alien traffic) and a level-start
-comparison of the door list and animation slots against the original.
+Verify the new level-1 endgame against the original (a recorded run that destroys a generator, a player death and a
+countdown second, captured at the frame flip), then the remaining level-1 behaviours (bouncing weapons need the Intex
+shop), sound effects through the Web Audio boundary, and loading the next level after the exit.

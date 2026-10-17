@@ -66,9 +66,14 @@ test('hazard cells: 0x44 always, 0x40 only when moving left (and it blocks left 
   const barrier = fixture({ [at(92, 92)]: 0x40 }); updatePlayer(barrier.state, barrier.player, 0); assert.equal(barrier.player.energy, 64);
   updatePlayer(barrier.state, barrier.player, INPUT.LEFT); assert.equal(barrier.player.energy, 64 - 32); assert.equal(barrier.player.moveMask, 0x0d);
 });
-test('unimplemented cell effects stop strict runs with a diagnostic', () => {
-  const { state, player } = fixture({ [at(92, 92)]: 0x15 });
-  assert.throws(() => updatePlayer(state, player, 0), /Cell effect 0x15/);
+test('touching cell 0x15 starts the self-destruct with the level\'s BCD seconds and red alert', () => {
+  const { state, player } = fixture({ [at(92, 92)]: 0x15 }); state.tables.selfDestructSeconds = [0x50, 0x50, 0x60];
+  updatePlayer(state, player, 0);
+  assert.equal(state.selfDestruct, true); assert.equal(state.seconds, 0x60); assert.equal(state.redAlert, true);
+});
+test('unimplemented behaviour stops strict runs with a diagnostic', () => {
+  const { state, player } = fixture(); player.onIntex = 0xffff;
+  assert.throws(() => updatePlayer(state, player, INPUT.ACTION), /Intex terminal/);
 });
 test('firing spends ammo, plays the weapon sound, creates a shot at the facing offset and respects the fire-rate mask', () => {
   const { state, player } = fixture();
@@ -79,4 +84,23 @@ test('firing spends ammo, plays the weapon sound, creates a shot at the facing o
   for (let i = 0; i < 3; i++) { state.sounds = []; updatePlayer(state, player, INPUT.FIRE); assert.deepEqual(state.sounds, []); }
   assert.equal(player.fireRepeat, 0, 'mask 3 wraps the repeat counter after four frames');
   player.ammo = 0; updatePlayer(state, player, INPUT.FIRE); assert.deepEqual(state.sounds, [0x17], 'empty sound');
+});
+
+test('HUD elements follow 18B2:17D0: clamps, icon widths, marker pixels and opaque copies', async () => {
+  const { createHud, drawHud, blitPanel } = await import('../src/game/hud.js');
+  const { createFramebuffer } = await import('../src/game/render.js');
+  const panel = Uint8Array.from({ length: 320 * 200 }, (_, i) => (i % 320) & 15); // pixel = column & 15
+  const hud = createHud(panel), at = (x, y) => hud.buffer[y * 320 + x];
+  assert.equal(at(5, 0), 0xf5, 'top 32 rows recoloured to 0xF0 | p');
+  drawHud(hud, { energy: 10, lives: 2, ammo: 0x183, keys: 7 });
+  assert.equal(at(32 + 9, 2), 0xf0 | ((32 + 9) & 15), 'energy column 9 copied'); assert.equal(at(32 + 10, 2), 0xf0, 'energy column 10 blank');
+  assert.equal(at(128 + 7, 2), 0xf0 | ((128 + 7) & 15), 'two lives = 8 columns'); assert.equal(at(128 + 8, 2), 0xf0);
+  assert.equal(at(128 + 16, 2 + 3), 0x00, 'lives marker pixel when lives <= 4'); assert.equal(at(128 + 18, 2), 0xf0 | ((128 + 18) & 15), 'lives art columns 16..19 kept');
+  assert.equal(at(32 + 11, 14), 0xf0 | ((32 + 11) & 15), 'three clips (0x183 >> 7 = 3) = 12 columns'); assert.equal(at(32 + 12, 14), 0xf0);
+  assert.equal(at(56, 14), 0xf0, 'bullets: (0x183 >> 2) & 31 = 0, so no columns'); assert.equal(at(128 + 24, 14 + 3), 0xf0 | ((128 + 24) & 15), 'no keys marker when keys > 6');
+  assert.equal(at(128 + 23, 14), 0xf0 | ((128 + 23) & 15), 'six key icons = 24 columns');
+  drawHud(hud, { energy: 64, lives: 4, ammo: 0x17f, keys: 0 });
+  assert.equal(at(56 + 30, 14), 0xf0 | ((56 + 30) & 15), 'bullets (0x17F >> 2) & 31 = 31 columns'); assert.equal(at(56 + 31, 14), 0xf0);
+  assert.equal(at(128 + 24, 14 + 3), 0xff, 'keys marker when keys <= 6'); assert.equal(at(128, 14), 0xf0, 'no key icons');
+  const frame = createFramebuffer(); blitPanel(frame, hud); assert.equal(frame[176 * 320 + 32], at(32, 2), 'panel row 2 lands on screen row 176');
 });

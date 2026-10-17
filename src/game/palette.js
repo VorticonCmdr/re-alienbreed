@@ -16,4 +16,15 @@ export function buildGamePalette(exe, tileSheetBytes, level) {
 // The level's alien sprite sheet file name (record pointer table 2041:96F2 + level * 4).
 export const alienSheetName = (exe, level) => exe.string(DATA_SEGMENT, exe.u16(DATA_SEGMENT, exe.u16(DATA_SEGMENT, 0x96f2 + level * 4)));
 
+// 1000:5F60, the self-destruct palette for entries 0..223 (8-bit unsigned shifts on the 6-bit values).
+export function redAlertPalette(palette) {
+  const result = Uint8Array.from(palette);
+  for (let i = 0; i < 224 * 3; i += 3) {
+    const r = palette[i], g = palette[i + 1], b = palette[i + 2];
+    let red = ((r + (b >> 2) + (g >> 1)) & 0xff) >> 1; if (((red << 24) >> 24) >= 0x3f) red = 0x3f;
+    result[i] = red; result[i + 1] = g >> 2; result[i + 2] = b >> 3;
+  }
+  return result;
+}
+
 export const dacToRgb = palette => Uint8Array.from(palette, v => Math.round((v & 63) * 255 / 63));

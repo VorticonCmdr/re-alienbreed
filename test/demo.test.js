@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { openExe } from '../src/game/exe.js';
 import { decodeMap } from '../src/game/level.js';
 import { decompressLzhuf } from '../src/lzhuf.js';
-import { readTables, startLevel, levelTileset, stepFrame, UnsupportedPath } from '../src/game/sim.js';
+import { readTables, startLevel, levelTileset, stepFrame, startSelfDestruct, UnsupportedPath, INPUT } from '../src/game/sim.js';
 
 const game = new URL('../game/', import.meta.url), strict = process.env.ALIEN_BREED_STRICT === '1';
 const missing = !existsSync(new URL('ALIEN.EXE', game));
@@ -87,4 +87,40 @@ test('negative control: dropping one input byte breaks the checkpoint comparison
   const altered = new Uint8Array(1024); altered.set(demo.subarray(0, 10)); altered.set(demo.subarray(11), 10);
   const { log } = await replay(60, altered), c = manifest.checkpoints[1];
   assert.notDeepEqual({ x: log[c.afterFrame].x, y: log[c.afterFrame].y, frame: log[c.afterFrame].frame }, c.player);
+});
+
+async function levelOne() {
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL('LBMZ.HUF', game)))));
+  return startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2) });
+}
+test('self-destruct countdown runs on timer ticks: 0x334 per tick, one BCD second per carry, end sequence at zero', { skip: missing }, async () => {
+  const state = await levelOne();
+  for (let i = 0; i < 30; i++) stepFrame(state, INPUT.RIGHT); // off the exit pad around the start marker
+  startSelfDestruct(state); assert.equal(state.seconds, 0x60); assert.ok(state.redAlert);
+  stepFrame(state, 0, 79); assert.equal(state.seconds, 0x60, 'no carry after 79 ticks');
+  stepFrame(state, 0, 1); assert.equal(state.seconds, 0x59); assert.ok(state.sounds.includes(0x16));
+  state.seconds = 1; stepFrame(state, 0, 80);
+  assert.equal(state.seconds, 0); assert.equal(state.selfDestruct, false); assert.ok(state.endSequence >= 1);
+  let frames = 0; while (!state.levelOver) { stepFrame(state, 0); frames++; }
+  assert.equal(state.levelOver, 'gameover'); assert.equal(frames, 0x8c - 2, 'end sequence lasts until [92F2] reaches 0x8C');
+});
+test('death runs the original dying script, freezes the player, and respawns at the safe position', { skip: missing }, async () => {
+  const state = await levelOne(), player = state.players[0];
+  stepFrame(state, 0); stepFrame(state, 0);
+  const safe = { x: player.safeX, y: player.safeY };
+  player.energy = 0; stepFrame(state, 0);
+  assert.deepEqual([player.lives, player.energy, player.type, player.invulnerable], [3, 0x40, 2, 0x4b]);
+  const x = player.x; stepFrame(state, INPUT.RIGHT); assert.equal(player.x, x, 'no movement while dying');
+  let ticks = 1; while (player.type === 2 && ticks < 100) { stepFrame(state, 0); ticks++; }
+  assert.equal(player.type, 1, 'back to the normal player script'); assert.ok(ticks >= 32 && ticks <= 34, `respawn after ${ticks} frames`);
+  assert.deepEqual({ x: player.x, y: player.y }, safe, 'opcode 0x80 moves to the safe position');
+});
+
+test('the exit pad at the start completes level index 2 only while the self-destruct runs', { skip: missing }, async () => {
+  const state = await levelOne();
+  for (let i = 0; i < 5; i++) stepFrame(state, 0);
+  assert.equal(state.levelOver, null, 'standing on the pad does nothing before the self-destruct');
+  startSelfDestruct(state); stepFrame(state, 0);
+  assert.equal(state.levelOver, 'complete');
 });
