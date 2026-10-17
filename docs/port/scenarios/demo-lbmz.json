@@ -9,7 +9,7 @@
   "emulator": {
     "engine": "dosbox-automation 0.84.0-vc1 (f6d9b), dosbox-mcp bridge 0.1.1",
     "cycles": "bridge config default (not visible through MCP); demo mode forces the lag flag to 0, so cycles do not change demo movement",
-    "recipe": "docs/port/scenarios/boot-to-level1.md, then leave the title idle until the attract demo starts (cs:[8716] = 2, [B0B2] = 2)"
+    "recipe": "docs/port/scenarios/boot-to-level1.md; let the title sit until the attract demo starts. Execute breakpoint at live 01F5:1BB7 (level initialiser return) with cs:[8716] = 2; then a frame-end breakpoint at live 20EA:12BC with ignore_count to reach each hit"
   },
   "capture": {
     "method": "execute breakpoint at live 20EA:12BC (frame end) with ignore_count; registers and memory read while paused; screenshot via screen_capture raw mode",
@@ -17,13 +17,151 @@
   },
   "inputs": "DEMO.DAT bytes in order, one per stepFrame call, starting with the first of the two warm-up frames the level start runs",
   "alignment": {
-    "kind": "fitted",
-    "note": "The frame of the first checkpoint was found by searching the port's run for the observed player state. The original's breakpoint counted 21 frame ends between the two observations, and the second checkpoint is checked at exactly +21 frames without further fitting."
+    "kind": "derived",
+    "rule": "Frame-end hit k (counted from the level-initialiser breakpoint) is the flip of port step k-2. At that moment the original has run that step's camera follow, tile animations, shots and object scripts but not its player or alien updates, so: player, alien slot, RNG and counts = port after step k-3; camera and object script fields = port after step k-2.",
+    "evidence": "Hit 1 is an extra flip during the level start's scroll-in (player not yet placed, seen in the first session). With this rule checkpoints 100, 300 and 500 match without any fitting.",
+    "earlierFittedCheckpoints": "The 2026-10-17 checkpoints at frames 28/49 were found by search; they remain as consistency checks of the same run."
   },
   "checkpoints": [
-    { "afterFrame": 28, "player": { "x": 1032, "y": 784, "frame": 12 }, "nextFrame": { "camera": { "x": 855, "y": 680 }, "tileCamera": { "x": 852, "y": 680 } }, "source": "demo run 2, breakpoint stop with camera 855,680; tile camera from the screenshot offset search (99.3% of sampled pixels exact)" },
-    { "afterFrame": 49, "player": { "x": 1056, "y": 730, "frame": 2 }, "nextFrame": { "camera": { "x": 879, "y": 642 }, "tileCamera": { "x": 879, "y": 645 } }, "source": "same run, 21 frame ends later; tile camera from the screenshot offset search (99.3% exact)" }
+    {
+      "afterFrame": 28,
+      "player": {
+        "x": 1032,
+        "y": 784,
+        "frame": 12
+      },
+      "nextFrame": {
+        "camera": {
+          "x": 855,
+          "y": 680
+        },
+        "tileCamera": {
+          "x": 852,
+          "y": 680
+        }
+      },
+      "source": "demo run 2, breakpoint stop with camera 855,680; tile camera from the screenshot offset search (99.3% of sampled pixels exact)"
+    },
+    {
+      "afterFrame": 49,
+      "player": {
+        "x": 1056,
+        "y": 730,
+        "frame": 2
+      },
+      "nextFrame": {
+        "camera": {
+          "x": 879,
+          "y": 642
+        },
+        "tileCamera": {
+          "x": 879,
+          "y": 645
+        }
+      },
+      "source": "same run, 21 frame ends later; tile camera from the screenshot offset search (99.3% exact)"
+    },
+    {
+      "hit": 100,
+      "player": {
+        "x": 1035,
+        "y": 682,
+        "frame": 4,
+        "energy": 64,
+        "ammo": 379,
+        "fireRepeat": 1
+      },
+      "counts": {
+        "aliens": 0,
+        "objects": 5
+      },
+      "rng": {
+        "low": 1,
+        "high": 65535,
+        "bit": 1
+      },
+      "camera": {
+        "x": 879,
+        "y": 594
+      }
+    },
+    {
+      "hit": 300,
+      "player": {
+        "x": 984,
+        "y": 682,
+        "frame": 1,
+        "energy": 64,
+        "ammo": 354,
+        "fireRepeat": 0,
+        "walk": 180
+      },
+      "counts": {
+        "aliens": 0,
+        "objects": 1
+      },
+      "rng": {
+        "low": 1,
+        "high": 65535,
+        "bit": 1
+      },
+      "camera": {
+        "x": 840,
+        "y": 594
+      }
+    },
+    {
+      "hit": 500,
+      "player": {
+        "x": 1101,
+        "y": 688,
+        "frame": 12,
+        "energy": 64,
+        "ammo": 324,
+        "walk": 247
+      },
+      "counts": {
+        "aliens": 1,
+        "objects": 2
+      },
+      "rng": {
+        "low": 16272,
+        "high": 32496,
+        "bit": 1
+      },
+      "alienSlot0": {
+        "kind": 1,
+        "direction": 1,
+        "cell": 5478,
+        "speed": 7,
+        "timer": 20,
+        "column": 1
+      },
+      "object": {
+        "x": 1280,
+        "y": 744,
+        "type": 7,
+        "frame": 204,
+        "energy": 16
+      },
+      "spawnRecord": {
+        "x": 1272,
+        "y": 744,
+        "cooldown": 3267
+      },
+      "camera": {
+        "x": 924,
+        "y": 594
+      }
+    }
   ],
   "rules": "exact equality for positions, frames and cameras",
-  "limits": "The demo fires at frame 85; firing, aliens and projectiles are not implemented yet, so the strict replay stops there by design."
+  "limits": "The original's 48D3 scan also produces 5 phantom spawn records at y = 8 (probes above the map read memory before the row table); they can never spawn (y < 16) and are omitted by the port. Checkpoints after frame 500 are not captured yet.",
+  "environment": {
+    "rngSeed": {
+      "value": 1,
+      "source": "[B07A] (high word of the INT 8 counter) read at 01F5:1BB7 = 1; RNG state there = L 0x0001, H 0xFFFF, history 1 = seedRandom(1)",
+      "consumedAt": "1000:17FC (new game)"
+    }
+  }
 }

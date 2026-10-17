@@ -2,8 +2,8 @@
 import { assetSource, entriesFromFileList } from './assets.js';
 import { openExe } from './exe.js';
 import { decodeMap, buildTileStore, levelMapNames, levelTileSheetNames } from './level.js';
-import { buildGamePalette, dacToRgb } from './palette.js';
-import { createFramebuffer, drawMap, toRgba, SCREEN_WIDTH } from './render.js';
+import { buildGamePalette, dacToRgb, alienSheetName } from './palette.js';
+import { createFramebuffer, drawMap, drawObjects, drawShots, toRgba, SCREEN_WIDTH } from './render.js';
 import { frameDescriptor, drawSprite } from './sprites.js';
 import { readTables, startLevel, levelTileset, stepFrame, UnsupportedPath } from './sim.js';
 import { bindingsFromSetup, createKeyboard } from './input.js';
@@ -31,25 +31,25 @@ async function load(source) {
   const sheetBytes = await Promise.all(levelTileSheetNames(exe, LEVEL).map(name => source.read(name)));
   const map = decodeMap(decompressLzhuf(await source.read(levelMapNames(exe)[LEVEL])));
   const tileStore = buildTileStore(sheetBytes.map(bytes => decodeVga(bytes)));
-  const palette = dacToRgb(buildGamePalette(exe, sheetBytes[1]));
-  const playerSheet = decodePlanar(decompressLzhuf(await source.read('PLAYER1.EHF'))).pixels;
+  const palette = dacToRgb(buildGamePalette(exe, sheetBytes[1], LEVEL));
+  const sprites = async name => decodePlanar(decompressLzhuf(await source.read(name))).pixels;
+  // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
+  const sheets = { 0xb409: [await sprites('PLAYER1.EHF'), await sprites('PLAYER2.EHF')], 0xadd2: [await sprites('BOOM_NEW.EHF')], 0xb0b4: [await sprites(alienSheetName(exe, LEVEL))] };
   const panel = decodeVga(decompressLzhuf(await source.read('PANEL.VHF')));
   keyboard = createKeyboard(bindingsFromSetup(await source.read('SETUP.DAT')));
   const state = startLevel({ tables, map, level: LEVEL, tileset: levelTileset(exe, LEVEL), strict: !$('preview').checked });
   const frames = new Map(), descriptor = n => { if (!frames.has(n)) frames.set(n, frameDescriptor(exe, n)); return frames.get(n); };
-  game = { exe, state, tileStore, palette, playerSheet, panel, descriptor, framebuffer: createFramebuffer() };
+  game = { exe, tables, state, tileStore, palette, sheets, panel, descriptor, framebuffer: createFramebuffer() };
   // The level start runs two complete frames before the main loop (1000:1B70, CALL 37D6 twice).
   stepFrame(state, 0); stepFrame(state, 0);
 }
 
 function render() {
-  const { state, framebuffer: fb, tileStore, playerSheet, panel, descriptor } = game, view = state.view;
+  const { state, framebuffer: fb, tileStore, sheets, panel, descriptor, tables } = game, view = state.view;
   fb.fill(0);
   drawMap(fb, state, tileStore, view.tileCamera.x - 16, view.tileCamera.y, 0, PLAYFIELD);
-  for (const p of view.players) if (p.frame && p.frame !== 0xf0) {
-    const d = descriptor(p.frame);
-    drawSprite(fb, d, [playerSheet], p.x - d.width / 2 - view.spriteCamera.x, p.y - p.height - d.height - view.spriteCamera.y, false, 0, PLAYFIELD);
-  }
+  drawObjects(fb, view, sheets, descriptor, drawSprite, PLAYFIELD);
+  drawShots(fb, view, tables, sheets, descriptor, drawSprite, PLAYFIELD);
   // Panel rows 2..21 of PANEL.VHF at screen rows 176..195, recoloured to 0xF0 | p (1000:20C3, 18B2:3BB2).
   for (let y = 0; y < 20; y++) for (let x = 0; x < SCREEN_WIDTH; x++) fb[(PLAYFIELD + y) * SCREEN_WIDTH + x] = 0xf0 | (panel.pixels[(y + 2) * 320 + x] & 15);
   image.data.set(toRgba(fb, game.palette)); context.putImageData(image, 0, 0);
@@ -57,7 +57,7 @@ function render() {
   const skipped = [...new Set(state.diagnostics.map(d => d.message.replace(/ at .*| \(.*/, '')))];
   $('preview-banner').hidden = state.strict;
   $('preview-banner').textContent = `Preview mode: not reproduced and skipped so far: ${skipped.join(', ') || 'nothing yet'}. Preview runs are not faithful.`;
-  $('debug').textContent = `Keys ${p.keys}  Energy ${p.energy}  Lives ${p.lives}  Ammo ${p.ammo >> 7}+${p.ammo & 127}  Position ${p.x},${p.y}  Frame ${state.frame}`;
+  $('debug').textContent = `Keys ${p.keys}  Energy ${p.energy}  Lives ${p.lives}  Ammo ${p.ammo >> 7}+${p.ammo & 127}  Aliens ${state.aliveAliens}  Position ${p.x},${p.y}  Frame ${state.frame}`;
 }
 
 function tick(now) {

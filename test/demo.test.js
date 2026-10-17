@@ -16,7 +16,7 @@ const manifest = JSON.parse(await readFile(new URL('../docs/port/scenarios/demo-
 async function replay(frames, demoBytes) {
   const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
   const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL('LBMZ.HUF', game)))));
-  const state = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), demoMode: 2 });
+  const state = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), demoMode: 2, rngSeed: manifest.environment.rngSeed.value });
   const demo = demoBytes || new Uint8Array(await readFile(new URL('DEMO.DAT', game)));
   assert.equal(demo.length, 1024, 'DEMO.DAT must hold 1024 input bytes');
   const log = [];
@@ -28,11 +28,12 @@ async function replay(frames, demoBytes) {
   return { log, state };
 }
 
-test('demo replay reproduces the observed player and camera checkpoints', { skip: missing }, async () => {
-  const last = Math.max(...manifest.checkpoints.map(c => c.afterFrame)) + 2;
+test('demo replay reproduces the fitted 2026-10-17 player and camera checkpoints', { skip: missing }, async () => {
+  const fitted = manifest.checkpoints.filter(c => c.afterFrame !== undefined);
+  const last = Math.max(...fitted.map(c => c.afterFrame)) + 2;
   const { log } = await replay(last);
-  assert.ok(manifest.checkpoints.length >= 2, 'manifest must list checkpoints');
-  for (const c of manifest.checkpoints) {
+  assert.ok(fitted.length >= 2, 'manifest must list checkpoints');
+  for (const c of fitted) {
     const at = log[c.afterFrame], next = log[c.afterFrame + 1];
     assert.deepEqual({ x: at.x, y: at.y, frame: at.frame }, c.player, `player after frame ${c.afterFrame}`);
     assert.deepEqual(next.camera, c.nextFrame.camera, `camera after frame ${c.afterFrame + 1}`);
@@ -40,8 +41,44 @@ test('demo replay reproduces the observed player and camera checkpoints', { skip
   }
 });
 
-test('the strict replay stops at the first unimplemented behaviour instead of continuing silently', { skip: missing }, async () => {
-  await assert.rejects(replay(1024), error => error instanceof UnsupportedPath && /Effect object|Alien spawn/.test(error.message));
+// Unfitted checkpoints: frame-end hit k is the flip of step k-2 (manifest "alignment"). Player, alien, RNG and counts
+// are compared after step k-3; the camera and script-driven object fields after step k-2.
+test('demo replay with the original seed matches unfitted checkpoints, including aliens and the RNG', { skip: missing }, async () => {
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL('LBMZ.HUF', game)))));
+  const state = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), demoMode: 2, rngSeed: manifest.environment.rngSeed.value });
+  const demo = new Uint8Array(await readFile(new URL('DEMO.DAT', game)));
+  const checkpoints = manifest.checkpoints.filter(c => c.hit);
+  assert.ok(checkpoints.length >= 3, 'manifest must list unfitted checkpoints');
+  const pick = (object, fields) => Object.fromEntries(Object.keys(fields).map(k => [k, object[k]]));
+  const seen = new Set();
+  for (let step = 0; step <= Math.max(...checkpoints.map(c => c.hit)) - 2; step++) {
+    stepFrame(state, demo[step]);
+    for (const c of checkpoints) {
+      if (step === c.hit - 3) {
+        const p = state.players[0], label = `hit ${c.hit}`;
+        assert.deepEqual(pick(p, c.player), c.player, `${label} player`);
+        assert.equal(state.aliveAliens, c.counts.aliens, `${label} live aliens`);
+        assert.deepEqual({ low: state.rng.s & 0xffff, high: state.rng.s >>> 16, bit: state.rng.c }, c.rng, `${label} RNG`);
+        if (c.alienSlot0) assert.deepEqual(pick(state.aliens[0], c.alienSlot0), c.alienSlot0, `${label} alien slot 0`);
+        if (c.spawnRecord) assert.equal(state.spawnPoints.find(r => r.x === c.spawnRecord.x && r.y === c.spawnRecord.y).cooldown, c.spawnRecord.cooldown, `${label} spawn cooldown`);
+        if (c.object) { const { frame, ...rest } = c.object; assert.deepEqual(pick(state.aliens[0].object, rest), rest, `${label} object`); }
+        seen.add(`${c.hit}a`);
+      }
+      if (step === c.hit - 2) {
+        assert.deepEqual({ x: state.camera.x, y: state.camera.y }, c.camera, `hit ${c.hit} camera`);
+        assert.equal(state.atFlip.objectCount, c.counts.objects, `hit ${c.hit} object count at the flip`);
+        if (c.object) assert.equal(state.aliens[0].object.frame, c.object.frame, `hit ${c.hit} object frame (scripts of step k-2)`);
+        seen.add(`${c.hit}b`);
+      }
+    }
+  }
+  assert.equal(seen.size, checkpoints.length * 2, 'every checkpoint was compared');
+});
+
+test('the strict replay of the whole demo meets no unimplemented behaviour', { skip: missing }, async () => {
+  const { state } = await replay(1024);
+  assert.deepEqual(state.diagnostics, []);
 });
 
 test('negative control: dropping one input byte breaks the checkpoint comparison', { skip: missing }, async () => {

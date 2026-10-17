@@ -22,3 +22,32 @@ export function toRgba(frame, palette, target = new Uint8ClampedArray(frame.leng
   }
   return target;
 }
+
+// 1000:6808 for the draw list, then 1000:568E for shots (drawn after the objects). `sheets` maps a descriptor's
+// sheet variable (DS address) to its loaded 4-bit sheets; `descriptor(n)` reads frame n from the executable.
+export function drawObjects(frame, view, sheets, descriptor, drawSprite, clipBottom) {
+  const cam = view.spriteCamera;
+  for (const o of view.objects) {
+    if (!o.frame) continue;
+    const d = descriptor(o.frame), sheet = sheets[d.sheetVariable];
+    if (!sheet) throw new Error(`No sprite sheet loaded for frame 0x${o.frame.toString(16)} (variable ${d.sheetVariable.toString(16)})`);
+    const x = o.x - d.width / 2 - cam.x + (o.flip ? -d.adjustX : d.adjustX), y = o.y - o.z - d.height - cam.y + d.adjustY;
+    if (o.player2) throw new Error('Drawing player 2 (sheet selection through [9E40]) is not modelled yet');
+    drawSprite(frame, d, sheet, x, y, !!o.flip, 0, clipBottom);
+  }
+}
+export function shotFrame(tables, shot, frameCounter, phase) {
+  if (shot.type === 1) return 0;
+  if (shot.type === 3) return 0xbd + ((frameCounter >> 1) & 7);
+  if (shot.type === 5) return tables.fadingShotFrames[shot.counter >> 2];
+  const row = shot.type === 6 ? tables.shotPhaseFrames[phase] : tables.shotFrames[shot.type - 2];
+  const f = row[shot.direction & 15]; return f === 0xffff ? 0 : f;
+}
+export function drawShots(frame, view, tables, sheets, descriptor, drawSprite, clipBottom) {
+  for (const shot of view.shots) {
+    const f = shotFrame(tables, shot, view.frameCounter, view.shotPhase || 0); if (!f) continue;
+    const d = descriptor(f), sheet = sheets[d.sheetVariable];
+    if (!sheet) throw new Error(`No sprite sheet loaded for shot frame 0x${f.toString(16)}`);
+    drawSprite(frame, d, sheet, shot.x - 8 - view.spriteCamera.x + d.adjustX, shot.y - 8 - view.spriteCamera.y + d.adjustY, false, 0, clipBottom);
+  }
+}

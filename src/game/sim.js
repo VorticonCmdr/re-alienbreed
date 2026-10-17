@@ -1,6 +1,8 @@
 // Game simulation, independent of the DOM and of wall-clock time. One step() is one original game frame.
 // Addresses in comments are Ghidra addresses; evidence and remaining uncertainty: docs/port/evidence.md.
 import { MAP_WIDTH, MAP_CELLS } from './level.js';
+import { emptyRecord, scriptTables, allocObject, setObjectType, runScripts, drawList, PLAYER_RECORDS, OBJECT_SLOTS } from './objects.js';
+import { seedRandom, nextRandom } from './rng.js';
 
 const CODE = 0x1000, DATA = 0x2041;
 export class UnsupportedPath extends Error {
@@ -11,6 +13,7 @@ export class UnsupportedPath extends Error {
 export function readTables(exe) {
   const lists = new Map();
   return {
+    ...scriptTables(exe),
     moveSteps: Array.from({ length: 32 }, (_, i) => exe.u16(CODE, 0x7b4a + 2 * i)), // cs:7B4A, [lag * 16 + speed]
     animBase: Array.from({ length: 16 }, (_, i) => exe.u16(CODE, 0x6545 + 2 * i)),  // cs:6545, per 4-bit direction
     // Aliens (1000:4A66) and shots (5928, 52F4); indexing follows the original, including its quirks.
@@ -25,6 +28,10 @@ export function readTables(exe) {
     shotOffset: Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, 0x5add + 4 * i), exe.s16(CODE, 0x5add + 4 * i + 2)]),
     spread: [0x5a65, 0x5aa1].map(t => Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, t + 4 * i), exe.s16(CODE, t + 4 * i + 2)])),
     bounceDirection: Array.from({ length: 16 }, (_, i) => exe.u8(CODE, 0x5672 + i)),
+    // Shot frames for 1000:568E: [type - 2][direction], two alternating rows for type 6, and type 5's sequence.
+    shotFrames: Array.from({ length: 6 }, (_, t) => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, 0x570c + 32 * t + 2 * i))),
+    shotPhaseFrames: [0x57cc, 0x57ec].map(o => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, o + 2 * i))),
+    fadingShotFrames: Array.from({ length: 7 }, (_, i) => exe.u16(CODE, 0x5682 + 2 * i)),
     animList(offset) { // DS word lists for the tile animation ticker 1000:8606
       if (!lists.has(offset)) {
         const words = [];
@@ -231,7 +238,7 @@ function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; 
 // Tileset id per level, byte table cs:4021 in the executable.
 export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 
-export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved }) {
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0 }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
@@ -239,7 +246,12 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     lasersHit: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
     spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
+    objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, emptyRecord), objectCount: 0,
+    aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
+    aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
+    rng: seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
   };
+  state.report = message => unsupported(state, message);
   // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
   const codeAt = (x, y) => {
     if (y - 16 < 0) { unsupported(state, `Level-start probe above the map at (${x}, ${y})`); return -1; }
@@ -264,7 +276,9 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
   };
   player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
   if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
-  state.players = [player];
+  // Player record set up like 7376 without clearing the player fields (74FC is not fully read yet).
+  Object.assign(player, { active: true, flags0A: 0x80, flags0B: 0x40, type: 1, script: tables.scriptStart(1), z: 0, oldZ: 0, delay: 0, priority: 8, ticks: 0 });
+  state.objects[0] = player; state.objectCount = 1; state.players = [player];
   state.spawnPoints = [[0x28, 1], [0x29, 2], [0x34, 3]].flatMap(([code, type]) => { // 1000:48D3
     const points = []; for (let y = 8; y <= 0x5f8; y += 16) for (let x = 8; x <= 0x778; x += 16) if (x >= 16 && y >= 16 && codeAt(x, y) === code) points.push({ x, y, type, cooldown: 0 });
     return points;
@@ -322,16 +336,22 @@ export function stepFrame(state, input) {
   if (s16(state.burning) > 0) state.burning--;
   state.frameCounter = u16(state.frameCounter + 1);
   const tileCamera = { ...state.camera };
-  followCamera(state); tickAnimations(state); updateShots(state);
+  followCamera(state); tickAnimations(state);
+  const objects = drawList(state); // 1000:6764 draws before this frame's shots and scripts
+  updateShots(state);
+  for (const r of state.objects) if (r.active) { r.oldX = r.x; r.oldY = r.y; r.oldZ = r.z; } // 1000:65FC
+  runScripts(state);
   state.view = {
-    tileCamera, spriteCamera: { ...state.camera }, players: state.players.map(p => ({ x: p.x, y: p.y, height: p.height, frame: p.frame })),
+    tileCamera, spriteCamera: { ...state.camera }, objects, frameCounter: state.frameCounter, shotPhase: state.shotPhase,
     shots: state.shots.filter(s => s.type).map(s => ({ type: s.type, x: s.x, y: s.y, direction: s.direction, counter: s.counter })),
   };
+  state.shotPhase = (state.frameCounter >> 2) & 1; // cs:578C refreshed after 52F4 for the next frame's type-6 shots
+  state.atFlip = { objectCount: state.objectCount }; // what the original holds at its frame flip (for comparisons)
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
   for (const player of state.players) updatePlayer(state, player, input);
   for (const player of state.players) if (s16(player.energy) <= 0) unsupported(state, 'Player death');
-  checkAlienSpawn(state);
+  updateAliens(state);
   state.frame++;
 }
 
@@ -407,21 +427,118 @@ export function updateShots(state) {
   }
 }
 
-// Objects driven by the animation scripts at DS:E756 (impacts, explosions, death animations) are pending.
-function createEffect(state, type, x, y) { unsupported(state, `Effect object type ${type} at (${x}, ${y})`); }
+// Impacts, explosions and death animations are objects driven by their scripts.
+function createEffect(state, type, x, y) { return allocObject(state, type, x, y); }
 
 // ---- Aliens (1000:4A66, once per frame after the player updates) ----
 
-// Spawn eligibility of 1000:4EF7 for a free slot: the first record past its cooldown that is inside the extended
-// camera window, off screen unless it is type 3, and at least 16 pixels from the origin.
-function checkAlienSpawn(state) {
-  if (!state.spawnPoints.length || state.aliensSkipped) return;
+const random = state => nextRandom(state.rng);
+
+// 1000:4EF7 for one free slot. Every call walks the records from the start, so cooldowns of records before the one
+// that spawns are decremented once per free slot and frame, as in the original.
+function spawnAlien(state, slot) {
+  if (s16(state.aliveAliens) >= 6) return;
+  if (state.scriptedSpawnTimer !== -1) { state.report('Scripted alien spawn (levels 16/17)'); return; }
   const cx = state.camera.x, cy = state.camera.y;
-  const spawn = state.spawnPoints.find(r => {
-    if (r.cooldown > 0) return false;
-    if (r.x < cx - 0x40 || r.x > cx + 0x180 || r.y < cy - 0x40 || r.y > cy + 0xf0) return false;
-    if (r.type !== 3 && r.x >= cx - 0x10 && r.x <= cx + 0x150 && r.y >= cy - 0x10 && r.y <= cy + 0xc0) return false;
-    return r.x >= 0x10 && r.y >= 0x10;
-  });
-  if (spawn) { unsupported(state, `Alien spawn (type ${spawn.type} at ${spawn.x}, ${spawn.y})`); state.aliensSkipped = true; }
+  for (const r of state.spawnPoints) {
+    if (s16(r.cooldown) > 0) { r.cooldown = s16(r.cooldown - 1); continue; }
+    if (r.x < cx - 0x40 || r.x > cx + 0x180 || r.y < cy - 0x40 || r.y > cy + 0xf0) continue;
+    if (r.type !== 3 && r.x >= cx - 0x10 && r.x <= cx + 0x150 && r.y >= cy - 0x10 && r.y <= cy + 0xc0) continue;
+    if (r.x < 0x10 || r.y < 0x10) continue;
+    slot.kind = r.type === 3 ? 1 : r.type;
+    r.cooldown = s16((random(state) & 0x3ff) + 0x400); state.aliveAliens++;
+    const cell = cellAt(state, r.x, r.y); state.types[cell] |= 0x8000; slot.cell = cell;
+    slot.direction = 1;
+    let speed = (slot.kind & 3) + (state.level >> 1) + 5; if (speed > 15) speed = 15;
+    slot.speed = speed; slot.timer = s16(0x22 - 2 * speed);
+    slot.column = (speed >> 3) + (random(state) & 1) + 1;
+    let type = 6, x = r.x;
+    if (r.type === 3) { type = 7; x = s16(x + 8); r.cooldown = s16(r.cooldown + 0x800); state.sounds.push(0x0a); }
+    const object = allocObject(state, type, x, r.y); if (!object) return;
+    Object.assign(object, { walk: 0, facing: 1, energy: 0x10, push: 0, moveMask: 15, stuck: 0 });
+    object.flags0B |= 0x80; slot.object = object;
+    if (object.type !== 7) object.frame = object.animBase = 0x49;
+    if (slot.kind === 2) { object.energy = 8; object.frame = object.animBase = 0x8d; }
+    const target = state.players[0]; // one player: P1 (two-player alternation by cs:5119 parity not modelled)
+    if (state.playerCount !== 1) state.report('Alien targets with two players');
+    object.target = target; state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
+    return;
+  }
+}
+
+// 1000:4B74: occupancy cleared, death animation started on the same object, slot freed and refilled this frame.
+function removeAlien(state, slot) {
+  if (slot.cell >= 0 && slot.cell <= 0x2d00) state.types[slot.cell] &= 0x7fff;
+  setObjectType(state, slot.object, 8); if (slot.kind === 2) setObjectType(state, slot.object, 0x0a);
+  state.aliveAliens--; slot.kind = 0;
+  spawnAlien(state, slot);
+}
+// 1000:4B4C. Returns true when the alien died (and its slot was refilled).
+function hitAlien(state, slot, damage, player) {
+  state.alienHit = true; slot.object.energy = s16(slot.object.energy - damage);
+  if (slot.object.energy > 0) return false;
+  player.kills = addBcd(player.kills || 0, 1) & 0xffff; state.sounds.push(4);
+  removeAlien(state, slot); return true;
+}
+
+const ONE_WAY = { 0x0e: 0x0b, 0x0f: 0x0d, 0x10: 0x07, 0x11: 0x0e, 0x38: 0x09, 0x39: 0x05, 0x3a: 0x06, 0x3b: 0x0a };
+// 1000:5ED7: like the player mover but without the screen limits.
+function moveObject(object, step, bits) {
+  if (bits & 1) object.x = s16(object.x + step); if (bits & 2) object.x = s16(object.x - step);
+  if (bits & 4) object.y = s16(object.y + step); if (bits & 8) object.y = s16(object.y - step);
+}
+
+export function updateAliens(state) {
+  if (!state.spawnPoints.length) return;
+  const t = state.tables;
+  for (const slot of state.aliens) {
+    if (!slot.kind) { spawnAlien(state, slot); continue; }
+    const a = slot.object; if (a.type === 7) continue;
+    state.alienHit = false;
+    const { x: cx, y: cy } = state.camera;
+    if (a.x < cx - 0x40 || a.x > cx + 0x180 || a.y < cy - 0x40 || a.y > cy + 0xf0) { removeAlien(state, slot); continue; }
+    let lastPlayer = null, died = false;
+    for (const p of state.players) { // 1000:4AE8 contact; the alien always dies on contact
+      lastPlayer = p;
+      if (a.x < p.x - 0x18 || a.x > p.x + 0x18 || a.y < p.y - 0x18 || a.y > p.y + 0x18 || !(a.frame & 1)) continue;
+      if (!p.invulnerable) { p.energy = u16(p.energy - t.contactDamage[state.level + (slot.kind & 1)]); state.sounds.push(0x0f); }
+      if (hitAlien(state, slot, 0x40, p)) { died = true; break; }
+    }
+    if (died) continue;
+    const shot = state.shots.find(s => s.type && a.x >= s.x - 16 && a.x <= s.x + 16 && a.y >= s.y - 16 && a.y <= s.y + 16); // 1000:4987
+    if (shot) { const damage = t.shotDamage[shot.type]; shot.type = 0; if (hitAlien(state, slot, damage, lastPlayer)) continue; }
+    if (s16(slot.timer) >= 0) slot.timer = s16(slot.timer - 1);
+    else {
+      slot.timer = s16((random(state) & 15) + 0x22 - 2 * slot.speed);
+      const r = random(state);
+      if (r < ((0x0fff * slot.speed) & 0xffff)) {
+        const target = a.target; let d = 0;
+        if (s16(a.x & 0xfff0) < s16(target.x & 0xfff0)) d |= 1; else if (s16(a.x & 0xfff0) > s16(target.x & 0xfff0)) d |= 2;
+        if (s16(a.y & 0xfff0) < s16(target.y & 0xfff0)) d |= 4; else if (s16(a.y & 0xfff0) > s16(target.y & 0xfff0)) d |= 8;
+        slot.direction = d;
+      } else slot.direction = t.wanderDirection[r & 0x1f];
+    }
+    const d = slot.direction & 15;
+    for (const table of slot.kind === 2 ? [t.alienBase[0], t.alienBase[1]] : [t.alienBase[0]]) if (table[d] !== 0xffff) { a.animBase = table[d]; a.facing = d; }
+    if (state.alienHit) a.frame = a.animBase + 3;
+    else { let f = (a.walk & 7) >> 1; if (f === 3) f = 1; a.frame = a.animBase + f; }
+    a.oldX = a.x; a.oldY = a.y;
+    if (d) a.walk = u16(a.walk + 1);
+    moveObject(a, t.moveSteps[state.lag * 16 + slot.column], slot.direction & a.moveMask);
+    if (!(state.frameCounter & 1)) moveObject(a, 1, a.push & a.moveMask);
+    a.push = 0; a.moveMask = 15;
+    const h = slot.kind === 2 ? 6 : 8, yOffset = slot.kind === 2 ? 8 : 0;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) if (wallTest(state, a.x + sx * h, a.oldY + sy * h + yOffset, slot.cell, true)) a.x = a.oldX;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) if (wallTest(state, a.oldX + sx * h, a.y + sy * h + yOffset, slot.cell, true)) a.y = a.oldY;
+    if (a.x - 16 >= 0 && a.y - 16 >= 0) {
+      const cell = cellAt(state, a.x, a.y), code = state.types[cell] & 0xff;
+      if (code in ONE_WAY) a.moveMask &= ONE_WAY[code];
+      if (slot.cell !== cell) {
+        if (slot.cell >= 0 && slot.cell <= 0x2d00) state.types[slot.cell] &= 0x7fff;
+        state.types[cell] |= 0x8000; slot.cell = cell;
+      }
+    } else state.report('Alien probe left of or above the map');
+    if (a.x === a.oldX && a.y === a.oldY) { a.stuck = (a.stuck + 1) & 0xffff; if (s16(a.stuck) >= 8) { slot.direction = 0; slot.timer = s16(slot.timer - 1); } }
+    else a.stuck = 0;
+  }
 }

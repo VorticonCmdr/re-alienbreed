@@ -1,6 +1,6 @@
 # Port status
 
-Updated 2026-10-18. Evidence for each claim: [evidence.md](evidence.md). Scenarios: [scenarios/](scenarios/).
+Updated 2026-10-18 (aliens and firing). Evidence for each claim: [evidence.md](evidence.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
 
@@ -13,11 +13,15 @@ browser; tables are read from the executable at runtime.
 `npm run dev`, open `/game.html`, press **Play**. Level index 2 (`LBMZ.HUF`, the first level and the attract demo's
 level) starts at the original's spawn point. The player walks with the arrow keys (3 px per frame, diagonals
 unnormalised), collides per axis with sliding, rides conveyors, obeys one-way cells, picks up keys, first aid, ammo,
-extra lives and credits, and opens doors with keys. The camera follows with the original's dead zone and step limits.
+extra lives and credits, and opens doors with keys or by shooting them. Firing uses the original fire rate, ammo cost,
+shot speeds and start offsets; impacts, alien eggs, alien deaths and explosions run the original object scripts read
+from the executable. Aliens spawn, hatch, wander or chase with the original random generator, collide with walls and
+each other, hurt the player on contact and die from shots. The camera follows with the original's dead zone and step
+limits.
 The bottom panel is drawn from `PANEL.VHF`; its live values are not drawn yet (they are shown in text below the canvas).
 
 **Strict mode (default)** stops with a diagnostic as soon as the original would do something not reproduced yet.
-Walking right from the start reaches the first alien spawn at frame 47. **Preview mode** (checkbox) skips such
+ **Preview mode** (checkbox) skips such
 behaviour instead and lists what it skipped; it is not faithful and never counts as verification.
 
 ## Verification
@@ -29,19 +33,25 @@ behaviour instead and lists what it skipped; it is not faithful and never counts
 
 Verified levels, from strongest to weakest:
 
-- **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` replayed from level start reproduces
-  two observed player/camera checkpoints of the original exactly, 21 frames apart. The first checkpoint's frame number is
-  a fitted alignment; the second is not. A negative control (one dropped input byte) fails the comparison.
+- **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` replayed from level start with
+  the original's seed reproduces three unfitted checkpoints (frames 100, 300, 500): player position, sprite frame,
+  energy, ammo, fire and walk counters, camera, live aliens, object count, RNG state, the first alien's slot, its
+  spawn cooldown and its object script frame. The whole 1024-frame demo replays without reaching unimplemented
+  behaviour. A negative control (one dropped input byte) fails the comparison.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`): real key events in Chrome, asset loading from `game/`, spawn
-  point, 3 px steps, ~70 updates per second, camera follow, rendered playfield, strict stop on firing.
+  point, 3 px steps, ~70 updates per second, camera follow, rendered playfield, firing and impact, first alien spawn,
+  alien drawn from the alien sheet and palette bank.
 - **Routine checks** (`test/*.test.js`): map decoding (hash), RNG against an independent trace, collision, pickups, BCD,
   animation ticker.
 
 ## Known limitations
 
-- Not implemented (strict stop): aliens, firing and projectiles, hazards (0x14, 0x15, 0x40, 0x44-0x46, 0x64), death,
-  the Intex terminal, the exit, self-destruct, level 16/17 objectives, sound and music, the HUD values, two players,
-  menus, levels other than index 2.
+- Not implemented (strict stop): hazards (0x14, 0x15, 0x40, 0x44-0x46, 0x64), player death, generator hits and the
+  self-destruct, bouncing shots (weapons 3 and 7), destructible walls, the Intex terminal, the exit, level 16/17
+  objectives, object hooks (bosses), child objects, two players. Not present at all yet: sound and music, the HUD
+  values, menus, levels other than index 2.
+- The original's spawn scan creates 5 phantom spawn records from reads above the map; they can never spawn and are
+  omitted. The level-start door and decor scans have the same out-of-map reads; the port skips those points.
 - The level-start scans skip probe points on world row/column 0, where the original reads unrelated memory.
 - Frame rate: one update per 70 Hz retrace with the lag flag at 0 (a fast machine). The original speeds movement up
   when a frame takes 5 or more 96 Hz ticks; that is not modelled.
@@ -49,6 +59,6 @@ Verified levels, from strongest to weakest:
 
 ## Next milestone
 
-Aliens and firing (spawn, AI, contact damage, projectiles, generators), specified in the static notes from
-`1000:4A66`, `52F4` and `5928`. Then extend the demo replay past frame 85 against further original checkpoints,
-including the RNG seed (`[B07A]`, normally 0 early in a session).
+Finish level 1: hazards and player death, generator destruction and the self-destruct countdown, the exit, and the
+HUD values on the panel. Capture further original checkpoints beyond frame 500 (more alien traffic) and a level-start
+comparison of the door list and animation slots against the original.
