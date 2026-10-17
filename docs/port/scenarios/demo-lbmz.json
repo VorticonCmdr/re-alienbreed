@@ -153,10 +153,103 @@
         "x": 924,
         "y": 594
       }
+    },
+    {
+      "hit": 700,
+      "player": {
+        "x": 1110,
+        "y": 805,
+        "frame": 12,
+        "energy": 64,
+        "ammo": 322,
+        "walk": 432
+      },
+      "counts": {
+        "aliens": 1,
+        "objects": 2
+      },
+      "rng": {
+        "low": 45830,
+        "high": 23570,
+        "bit": 1
+      },
+      "alienSlot0": {
+        "kind": 1,
+        "direction": 10,
+        "cell": 5597,
+        "speed": 7,
+        "timer": 24,
+        "column": 1
+      },
+      "object": {
+        "x": 1256,
+        "y": 758,
+        "type": 6,
+        "frame": 94,
+        "energy": 16,
+        "walk": 175,
+        "facing": 10,
+        "animBase": 93,
+        "stuck": 0
+      },
+      "camera": {
+        "x": 933,
+        "y": 700
+      }
+    },
+    {
+      "hit": 900,
+      "player": {
+        "x": 1110,
+        "y": 805,
+        "frame": 22,
+        "energy": 64,
+        "ammo": 316,
+        "walk": 632
+      },
+      "counts": {
+        "aliens": 1,
+        "objects": 5
+      },
+      "rng": {
+        "low": 3795,
+        "high": 53011,
+        "bit": 0
+      },
+      "alienSlot0": {
+        "kind": 1,
+        "direction": 6,
+        "cell": 5597,
+        "speed": 7,
+        "timer": 8,
+        "column": 1
+      },
+      "object": {
+        "x": 1256,
+        "y": 764,
+        "type": 6,
+        "frame": 86,
+        "energy": 16,
+        "walk": 327,
+        "facing": 6,
+        "animBase": 85,
+        "stuck": 0
+      },
+      "effect": {
+        "record": 3,
+        "x": 1129,
+        "y": 814,
+        "type": 5,
+        "frame": 52
+      },
+      "camera": {
+        "x": 933,
+        "y": 700
+      }
     }
   ],
   "rules": "exact equality for positions, frames and cameras",
-  "limits": "The original's 48D3 scan also produces 5 phantom spawn records at y = 8 (probes above the map read memory before the row table); they can never spawn (y < 16) and are omitted by the port. Checkpoints after frame 500 are not captured yet.",
+  "limits": "The original's 48D3 scan also produces 5 phantom spawn records at y = 8 (probes above the map read memory before the row table); they can never spawn (y < 16) and are omitted by the port. Checkpoints after frame 900 are not captured yet.",
   "environment": {
     "rngSeed": {
       "value": 1,

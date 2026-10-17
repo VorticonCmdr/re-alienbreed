@@ -69,6 +69,7 @@ test('demo replay with the original seed matches unfitted checkpoints, including
         assert.deepEqual({ x: state.camera.x, y: state.camera.y }, c.camera, `hit ${c.hit} camera`);
         assert.equal(state.atFlip.objectCount, c.counts.objects, `hit ${c.hit} object count at the flip`);
         if (c.object) assert.equal(state.aliens[0].object.frame, c.object.frame, `hit ${c.hit} object frame (scripts of step k-2)`);
+        if (c.effect) { const { record, ...fields } = c.effect; assert.deepEqual(pick(state.objects[record], fields), fields, `hit ${c.hit} effect object`); }
         seen.add(`${c.hit}b`);
       }
     }
