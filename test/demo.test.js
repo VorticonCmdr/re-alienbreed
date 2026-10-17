@@ -41,7 +41,7 @@ test('demo replay reproduces the observed player and camera checkpoints', { skip
 });
 
 test('the strict replay stops at the first unimplemented behaviour instead of continuing silently', { skip: missing }, async () => {
-  await assert.rejects(replay(1024), error => error instanceof UnsupportedPath && /Firing/.test(error.message));
+  await assert.rejects(replay(1024), error => error instanceof UnsupportedPath && /Effect object|Alien spawn/.test(error.message));
 });
 
 test('negative control: dropping one input byte breaks the checkpoint comparison', { skip: missing }, async () => {

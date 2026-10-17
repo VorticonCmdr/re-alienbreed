@@ -13,6 +13,18 @@ export function readTables(exe) {
   return {
     moveSteps: Array.from({ length: 32 }, (_, i) => exe.u16(CODE, 0x7b4a + 2 * i)), // cs:7B4A, [lag * 16 + speed]
     animBase: Array.from({ length: 16 }, (_, i) => exe.u16(CODE, 0x6545 + 2 * i)),  // cs:6545, per 4-bit direction
+    // Aliens (1000:4A66) and shots (5928, 52F4); indexing follows the original, including its quirks.
+    contactDamage: Array.from({ length: 38 }, (_, i) => exe.u16(CODE, 0x4a1a + 2 * i)), // [level + (kind & 1)]
+    wanderDirection: Array.from({ length: 32 }, (_, i) => exe.u16(CODE, 0x49da + 2 * i)),
+    alienBase: [0x511b, 0x513d].map(t => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, t + 2 * i))),
+    fireMask: Array.from({ length: 7 }, (_, i) => exe.u8(CODE, 0x5b1d + i)),              // [weapon - 1]
+    ammoCost: Array.from({ length: 8 }, (_, i) => exe.u16(CODE, 0x5b26 + 2 * i)),        // [weapon]
+    fireSound: Array.from({ length: 7 }, (_, i) => exe.u16(CODE, 0x5b36 + 2 * i)),       // [weapon - 1]
+    shotDamage: Array.from({ length: 8 }, (_, i) => exe.u16(CODE, 0x5638 + 2 * i)),      // [type]
+    shotSpeed: Array.from({ length: 7 }, (_, i) => exe.u16(CODE, 0x5a00 + 2 * i)),       // [type - 1]
+    shotOffset: Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, 0x5add + 4 * i), exe.s16(CODE, 0x5add + 4 * i + 2)]),
+    spread: [0x5a65, 0x5aa1].map(t => Array.from({ length: 16 }, (_, i) => [exe.s16(CODE, t + 4 * i), exe.s16(CODE, t + 4 * i + 2)])),
+    bounceDirection: Array.from({ length: 16 }, (_, i) => exe.u8(CODE, 0x5672 + i)),
     animList(offset) { // DS word lists for the tile animation ticker 1000:8606
       if (!lists.has(offset)) {
         const words = [];
@@ -134,7 +146,7 @@ export function updatePlayer(state, player, input) {
   if (player.state === 2) return;
   state.firing = false;
   openDoors(state, player);
-  if (input & INPUT.FIRE) unsupported(state, 'Firing');
+  if (input & INPUT.FIRE) firePlayer(state, player);
   else player.fireRepeat = 0;
   if (input & INPUT.ACTION && s16(player.onIntex) === -1) unsupported(state, 'Intex terminal');
   const direction = input & 15, base = state.tables.animBase[direction];
@@ -225,6 +237,8 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
     animations: Array(79).fill(null), doors: [], sounds: [], diagnostics: [], playerCount: 1, shareCredits: false,
     lasersHit: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
+    shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
+    spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
   };
   // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
   const codeAt = (x, y) => {
@@ -237,7 +251,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     if (codeAt(x, y) !== 3 || (y - 16 >= 16 && codeAt(x, y - 16) === 3) || (x - 16 >= 16 && codeAt(x - 16, y) === 3)) continue;
     if (level === 0 && x < 0x3c0) continue;
     if (state.doors.length >= 0xc0) { unsupported(state, 'Door list overflow'); break; }
-    state.doors.push({ x, y, kind: codeAt(x + 16, y) === 3 ? 2 : 1 });
+    state.doors.push({ x, y, kind: codeAt(x + 16, y) === 3 ? 2 : 1, hp: 0xc0 });
   }
   convertDecor(state, tileset, codeAt);
   const start = find(0x35); // 1000:3BA6; the camera stays at 0 if there is no marker
@@ -308,8 +322,11 @@ export function stepFrame(state, input) {
   if (s16(state.burning) > 0) state.burning--;
   state.frameCounter = u16(state.frameCounter + 1);
   const tileCamera = { ...state.camera };
-  followCamera(state); tickAnimations(state);
-  state.view = { tileCamera, spriteCamera: { ...state.camera }, players: state.players.map(p => ({ x: p.x, y: p.y, height: p.height, frame: p.frame })) };
+  followCamera(state); tickAnimations(state); updateShots(state);
+  state.view = {
+    tileCamera, spriteCamera: { ...state.camera }, players: state.players.map(p => ({ x: p.x, y: p.y, height: p.height, frame: p.frame })),
+    shots: state.shots.filter(s => s.type).map(s => ({ type: s.type, x: s.x, y: s.y, direction: s.direction, counter: s.counter })),
+  };
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
   for (const player of state.players) updatePlayer(state, player, input);
@@ -318,8 +335,85 @@ export function stepFrame(state, input) {
   state.frame++;
 }
 
-// Spawn eligibility of 1000:4EF7 with no live aliens: the first record that is inside the extended camera window,
-// off screen unless it is type 3, and at least 16 pixels from the origin spawns. Aliens are not implemented yet.
+// ---- Shots (1000:5B58 player fire, 5928 creation, 52F4 per-frame update) ----
+
+// 1000:5648: the velocity for a 4-bit direction.
+function velocity(direction, step) {
+  let vx = 0, vy = 0;
+  if (direction & 1) vx += step; if (direction & 2) vx -= step;
+  if (direction & 4) vy += step; if (direction & 8) vy -= step;
+  return [vx, vy];
+}
+
+function firePlayer(state, player) {
+  const t = state.tables;
+  if (player.fireRepeat !== 0) { player.fireRepeat = u16(player.fireRepeat + 1) & t.fireMask[player.weapon - 1]; return; }
+  player.fireRepeat = u16(player.fireRepeat + 1);
+  if (s16(player.ammo) <= 0) { state.sounds.push(0x17); return; }
+  player.ammo = u16(player.ammo - t.ammoCost[player.weapon]); if (s16(player.ammo) < 0) player.ammo = 0;
+  state.sounds.push(t.fireSound[player.weapon - 1]); state.firing = true;
+  createShot(state, player.facing, player.weapon, player.x, player.y);
+}
+
+// 1000:5928. No free record: nothing happens.
+function createShot(state, facing, type, x, y) {
+  const shot = state.shots.find(s => !s.type); if (!shot) return;
+  const t = state.tables, direction = facing & 15, [dx, dy] = t.shotOffset[direction];
+  shot.x = dx === 0x4d2 ? x : s16(x + dx); shot.y = dx === 0x4d2 ? y : s16(y + dy);
+  shot.direction = facing; shot.type = type;
+  [shot.vx, shot.vy] = velocity(direction, t.moveSteps[state.lag * 16 + t.shotSpeed[type - 1]]);
+  if (type === 3 || type === 4 || type === 6) { // 1000:5A10: spread pattern none, A, B, none
+    const pattern = state.spreadCounter & 3;
+    if (pattern === 1 || pattern === 2) { const [sx, sy] = t.spread[pattern - 1][direction]; shot.vx += sx; shot.vy += sy; }
+    state.spreadCounter = (state.spreadCounter + 1) & 15;
+  }
+  if (type === 3) shot.counter = 4; else if (type === 7) shot.counter = 6; else if (type === 5) shot.counter = 0x18;
+}
+
+// 1000:5812: shots damage closed doors whose box contains (x, y + 0x18); the shot is not consumed.
+function shootDoors(state, x, y, damage) {
+  for (const door of state.doors) {
+    if (!door.kind) continue;
+    const { x: dx, y: dy } = door, vertical = door.kind === 1;
+    const inside = vertical ? x >= dx - 16 && x <= dx + 32 && y >= dy && y <= dy + 32 : x >= dx && x <= dx + 32 && y >= dy - 0x12 && y <= dy + 0x24;
+    if (!inside) continue;
+    door.hp = s16(door.hp - damage); if (door.hp > 0) continue;
+    door.kind = 0;
+    const second = vertical ? [dx, dy + 16] : [dx + 16, dy];
+    writeType(state, dx, dy, 0); startAnimation(state, vertical ? 0x8b74 : 0x8b58, worldCell(state, dx, dy));
+    writeType(state, ...second, 0); startAnimation(state, vertical ? 0x8b82 : 0x8b66, worldCell(state, ...second));
+    state.sounds.push(1);
+  }
+}
+
+export function updateShots(state) {
+  const { x: cx, y: cy } = state.camera, t = state.tables;
+  for (const shot of state.shots) {
+    if (!shot.type) continue;
+    if (shot.x < cx || shot.x > cx + 0x140 || shot.y < cy || shot.y > cy + 0xc8) { shot.type = 0; continue; }
+    if (shot.type === 5) { shot.counter = s16(shot.counter - 1); if (shot.counter <= 0) { shot.type = 0; continue; } }
+    const oldX = shot.x, oldY = shot.y;
+    shot.x = s16(shot.x + shot.vx); shot.y = s16(shot.y + shot.vy);
+    if (!(shot.direction & 15)) unsupported(state, 'Shot without a direction');
+    shootDoors(state, shot.x, s16(shot.y + 0x18), t.shotDamage[shot.type]);
+    const index = cellAt(state, shot.x, shot.y + 0x10), code = state.types[index] & 0xff;
+    if (WALLS.has(code)) {
+      if (code >= 0x2a && code <= 0x2d) unsupported(state, 'Generator hit');
+      if (shot.type === 3 || shot.type === 7) unsupported(state, 'Bouncing shot');
+      shot.type = 0; createEffect(state, 5, shot.x, s16(shot.y + 8));
+      continue;
+    }
+    if (code === 0x12 || code === 0x13) unsupported(state, 'Destructible wall hit');
+  }
+}
+
+// Objects driven by the animation scripts at DS:E756 (impacts, explosions, death animations) are pending.
+function createEffect(state, type, x, y) { unsupported(state, `Effect object type ${type} at (${x}, ${y})`); }
+
+// ---- Aliens (1000:4A66, once per frame after the player updates) ----
+
+// Spawn eligibility of 1000:4EF7 for a free slot: the first record past its cooldown that is inside the extended
+// camera window, off screen unless it is type 3, and at least 16 pixels from the origin.
 function checkAlienSpawn(state) {
   if (!state.spawnPoints.length || state.aliensSkipped) return;
   const cx = state.camera.x, cy = state.camera.y;

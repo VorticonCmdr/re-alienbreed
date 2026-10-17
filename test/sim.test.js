@@ -26,10 +26,13 @@ test('packed BCD credit addition carries between digits', () => {
 });
 
 function fixture(types = {}) {
-  const tables = { moveSteps: [...Array(16).keys(), ...Array.from({ length: 16 }, (_, n) => Math.floor(n * 1.5))], animBase: [-1, 11, 31, -1, 21, 16, 26, -1, 1, 6, 36, -1, -1, -1, -1, -1].map(v => v & 0xffff), animList: () => [7, 8, 0xffff] };
-  const state = { tables, tiles: new Uint16Array(MAP_CELLS), types: new Uint16Array(MAP_CELLS), camera: { x: 0, y: 0 }, lag: 0, level: 2, strict: true, diagnostics: [], sounds: [], animations: Array(80).fill(null), doors: [], playerCount: 1, frame: 0, burning: 0 };
+  const tables = { moveSteps: [...Array(16).keys(), ...Array.from({ length: 16 }, (_, n) => Math.floor(n * 1.5))], animBase: [-1, 11, 31, -1, 21, 16, 26, -1, 1, 6, 36, -1, -1, -1, -1, -1].map(v => v & 0xffff), animList: () => [7, 8, 0xffff],
+    fireMask: [3, 7, 15, 15, 7, 7, 15], ammoCost: [0, 1, 1, 2, 2, 2, 2, 2], fireSound: [7, 8, 0x11, 0x12, 0x14, 8, 0x11], shotDamage: [0, 5, 7, 8, 8, 16, 8, 16],
+    shotSpeed: [8, 8, 8, 10, 8, 12, 12], shotOffset: Array.from({ length: 16 }, (_, i) => i === 1 ? [12, -12] : [0x4d2, 0x4d2]), spread: [Array(16).fill([0, 0]), Array(16).fill([0, 0])] };
+  const state = { tables, tiles: new Uint16Array(MAP_CELLS), types: new Uint16Array(MAP_CELLS), camera: { x: 0, y: 0 }, lag: 0, level: 2, strict: true, diagnostics: [], sounds: [], animations: Array(80).fill(null), doors: [], playerCount: 1, frame: 0, burning: 0, spreadCounter: 0,
+    shots: Array.from({ length: 32 }, () => ({ type: 0 })) };
   for (const [cell, code] of Object.entries(types)) state.types[+cell] = code;
-  const player = { x: 100, y: 100, keys: 0, energy: 64, lives: 4, ammo: 0x17f, credits: 0, walk: 0, animBase: 11, facing: 1, moveMask: 15, conveyor: 0, cell: -1, hurt: false, invulnerable: 0, onIntex: 0, fireRepeat: 0, state: 1 };
+  const player = { x: 100, y: 100, keys: 0, energy: 64, lives: 4, ammo: 0x17f, weapon: 1, credits: 0, walk: 0, animBase: 11, facing: 1, moveMask: 15, conveyor: 0, cell: -1, hurt: false, invulnerable: 0, onIntex: 0, fireRepeat: 0, state: 1 };
   state.players = [player];
   return { state, player };
 }
@@ -60,5 +63,14 @@ test('a key pickup increments keys, plays sound 3, clears the cell type and star
 test('unimplemented cell effects stop strict runs with a diagnostic', () => {
   const { state, player } = fixture({ [at(92, 92)]: 0x44 });
   assert.throws(() => updatePlayer(state, player, 0), /Cell effect 0x44/);
-  assert.throws(() => updatePlayer(fixture().state, fixture().player, INPUT.FIRE), /Firing/);
+});
+test('firing spends ammo, plays the weapon sound, creates a shot at the facing offset and respects the fire-rate mask', () => {
+  const { state, player } = fixture();
+  updatePlayer(state, player, INPUT.FIRE);
+  const shot = state.shots.find(s => s.type);
+  assert.equal(player.ammo, 0x17e); assert.deepEqual(state.sounds, [7]); assert.equal(player.fireRepeat, 1);
+  assert.deepEqual([shot.x, shot.y, shot.vx, shot.vy, shot.direction], [112, 88, 8, 0, 1]);
+  for (let i = 0; i < 3; i++) { state.sounds = []; updatePlayer(state, player, INPUT.FIRE); assert.deepEqual(state.sounds, []); }
+  assert.equal(player.fireRepeat, 0, 'mask 3 wraps the repeat counter after four frames');
+  player.ammo = 0; updatePlayer(state, player, INPUT.FIRE); assert.deepEqual(state.sounds, [0x17], 'empty sound');
 });

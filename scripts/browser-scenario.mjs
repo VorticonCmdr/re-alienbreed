@@ -33,10 +33,13 @@ try {
   const pixels = await page.evaluate(() => { const fb = window.__alienBreed.framebuffer; let lit = 0; for (let i = 0; i < 176 * 320; i++) if (fb[i]) lit++; return lit; });
   check('the playfield renders map tiles', () => assert.ok(pixels > 176 * 320 * 0.5, `lit ${pixels}`));
 
-  await page.keyboard.down('KeyZ'); await page.waitForTimeout(150); await page.keyboard.up('KeyZ');
+  const ammoBefore = await page.evaluate(() => window.__alienBreed.state.players[0].ammo);
+  await page.keyboard.down('KeyZ'); await page.waitForTimeout(40); await page.keyboard.up('KeyZ');
   await page.locator('#diagnostic').waitFor({ state: 'visible', timeout: 5000 });
+  const fired = await page.evaluate(() => window.__alienBreed.state.players[0].ammo);
   const text = await page.textContent('#diagnostic');
-  check('firing stops strict mode with a visible diagnostic', () => assert.match(text, /Firing/));
+  check('pressing Z fires one round', () => assert.equal(ammoBefore - fired, 1));
+  check('the shot reaching unreproduced behaviour stops strict mode visibly', () => assert.match(text, /Stopped: (Effect object|Alien spawn)/));
   check('no uncaught page errors', () => assert.deepEqual(errors, []));
 } finally {
   await browser.close(); await server.close();
