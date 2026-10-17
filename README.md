@@ -1,6 +1,6 @@
 # Alien Breed web port
 
-A vanilla JavaScript foundation for porting the IBM PC edition of Alien Breed to the browser. The first milestone is an asset viewer, not a playable game.
+A vanilla JavaScript port of the IBM PC edition of Alien Breed (1993) that runs from your own original game files. The first level is partly playable; see [docs/port/STATUS.md](docs/port/STATUS.md) for what works, how it is verified, and what is missing. The repository also contains an asset viewer.
 
 ## Local development
 
@@ -11,10 +11,11 @@ npm install
 npm run dev
 ```
 
-Open [viewer.html](http://127.0.0.1:5173/viewer.html). The Vite development server discovers files from `game/` automatically. You can also use **Open game folder** to select that folder directly. Folder selection reads files in the browser without uploading them. Select the game folder itself, rather than its parent.
+Open [game.html](http://127.0.0.1:5173/game.html) to play or [viewer.html](http://127.0.0.1:5173/viewer.html) to browse assets. The Vite development server discovers files from `game/` automatically. You can also use **Open game folder** to select that folder directly. Folder selection reads files in the browser without uploading them. Select the game folder itself, rather than its parent.
 
 ```sh
-npm test
+npm test          # unit tests; game-data tests skip without game/
+npm run verify    # strict: needs game/, forbids skipped tests, runs a headless Chrome scenario
 npm run build
 npm run preview
 ```

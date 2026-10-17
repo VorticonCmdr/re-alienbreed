@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#000000"><meta name="description" content="Alien Breed (IBM PC, 1993) running in the browser from your own original game files.">
+  <title>Alien Breed</title>
+  <link rel="stylesheet" href="./src/game/game.css">
+</head>
+<body>
+  <main class="shell">
+    <canvas id="screen" width="320" height="200" aria-label="Alien Breed game screen" tabindex="0"></canvas>
+    <section id="setup" class="setup">
+      <h1>Alien Breed</h1>
+      <p>This port runs from your original IBM PC game files. They are read in your browser and never uploaded.</p>
+      <label class="mode"><input id="preview" type="checkbox"> Preview mode: skip behaviour that is not reproduced yet instead of stopping (listed on screen; not faithful)</label>
+      <button id="play" type="button" hidden>Play</button>
+      <button id="choose-folder" type="button">Open game folder</button>
+      <input id="folder-input" type="file" webkitdirectory multiple hidden>
+      <p id="status" role="status"></p>
+    </section>
+    <aside id="diagnostic" class="diagnostic" hidden role="alert"></aside>
+    <p id="preview-banner" class="preview" hidden></p>
+    <p class="help">Arrow keys move, <span id="fire-key">Z</span> fires, Esc returns to this screen. Strict mode stops on any behaviour this port does not reproduce yet.</p>
+    <p id="debug" class="debug"></p>
+  </main>
+  <script type="module" src="./src/game/main.js"></script>
+</body>
+</html>

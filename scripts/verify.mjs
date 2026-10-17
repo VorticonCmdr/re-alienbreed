@@ -19,4 +19,7 @@ if (skipped) problems.push(`${skipped} skipped (strict verification allows none)
 if (todo) problems.push(`${todo} todo`);
 if (pass !== tests) problems.push(`${pass}/${tests} passed`);
 if (problems.length) { console.error(`\nVerification FAILED: ${problems.join('; ')}`); process.exit(1); }
-console.log(`\nVerification passed: ${pass} tests, none skipped.`);
+const browser = spawnSync(process.execPath, [new URL('./browser-scenario.mjs', import.meta.url).pathname], { encoding: 'utf8' });
+process.stdout.write(browser.stdout); process.stderr.write(browser.stderr);
+if (browser.status !== 0 || !/browser scenario: \d+ checks passed/.test(browser.stdout)) { console.error('\nVerification FAILED: browser scenario'); process.exit(1); }
+console.log(`\nVerification passed: ${pass} tests, none skipped, browser scenario passed.`);

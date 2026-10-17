@@ -35,5 +35,5 @@ export default defineConfig({
       });
     },
   }],
-  build: { rolldownOptions: { input: { index: resolve(root, 'index.html'), viewer: resolve(root, 'viewer.html') } } },
+  build: { rolldownOptions: { input: { index: resolve(root, 'index.html'), viewer: resolve(root, 'viewer.html'), game: resolve(root, 'game.html') } } },
 });

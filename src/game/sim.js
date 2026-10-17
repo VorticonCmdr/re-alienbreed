@@ -314,5 +314,20 @@ export function stepFrame(state, input) {
   if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
   for (const player of state.players) updatePlayer(state, player, input);
   for (const player of state.players) if (s16(player.energy) <= 0) unsupported(state, 'Player death');
+  checkAlienSpawn(state);
   state.frame++;
+}
+
+// Spawn eligibility of 1000:4EF7 with no live aliens: the first record that is inside the extended camera window,
+// off screen unless it is type 3, and at least 16 pixels from the origin spawns. Aliens are not implemented yet.
+function checkAlienSpawn(state) {
+  if (!state.spawnPoints.length || state.aliensSkipped) return;
+  const cx = state.camera.x, cy = state.camera.y;
+  const spawn = state.spawnPoints.find(r => {
+    if (r.cooldown > 0) return false;
+    if (r.x < cx - 0x40 || r.x > cx + 0x180 || r.y < cy - 0x40 || r.y > cy + 0xf0) return false;
+    if (r.type !== 3 && r.x >= cx - 0x10 && r.x <= cx + 0x150 && r.y >= cy - 0x10 && r.y <= cy + 0xc0) return false;
+    return r.x >= 0x10 && r.y >= 0x10;
+  });
+  if (spawn) { unsupported(state, `Alien spawn (type ${spawn.type} at ${spawn.x}, ${spawn.y})`); state.aliensSkipped = true; }
 }
