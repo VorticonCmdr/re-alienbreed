@@ -13,7 +13,7 @@ browser; tables are read from the executable at runtime.
 `npm run dev`, open `/game.html`, press **Play**. Level index 2 (`LBMZ.HUF`, the first level and the attract demo's
 level) starts at the original's spawn point. The player walks with the arrow keys (3 px per frame, diagonals
 unnormalised), collides per axis with sliding, rides conveyors, obeys one-way cells, picks up keys, first aid, ammo,
-extra lives and credits, and opens doors with keys or by shooting them. Firing uses the original fire rate, ammo cost,
+extra lives and credits, takes damage from hazard cells, and opens doors with keys or by shooting them. Firing uses the original fire rate, ammo cost,
 shot speeds and start offsets; impacts, alien eggs, alien deaths and explosions run the original object scripts read
 from the executable. Aliens spawn, hatch, wander or chase with the original random generator, collide with walls and
 each other, hurt the player on contact and die from shots. The camera follows with the original's dead zone and step
@@ -21,8 +21,8 @@ limits.
 The bottom panel is drawn from `PANEL.VHF`; its live values are not drawn yet (they are shown in text below the canvas).
 
 **Strict mode (default)** stops with a diagnostic as soon as the original would do something not reproduced yet.
- **Preview mode** (checkbox) skips such
-behaviour instead and lists what it skipped; it is not faithful and never counts as verification.
+**Preview mode** (checkbox) skips such behaviour instead and lists what it skipped; it is not faithful and never counts
+as verification.
 
 ## Verification
 
@@ -46,7 +46,7 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): hazards (0x14, 0x15, 0x40, 0x44-0x46, 0x64), player death, generator hits and the
+- Not implemented (strict stop): the self-destruct trigger cell 0x15, player death, generator hits and the
   self-destruct, bouncing shots (weapons 3 and 7), destructible walls, the Intex terminal, the exit, level 16/17
   objectives, object hooks (bosses), child objects, two players. Not present at all yet: sound and music, the HUD
   values, menus, levels other than index 2.

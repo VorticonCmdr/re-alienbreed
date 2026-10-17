@@ -67,7 +67,7 @@ function wallTest(state, x, y, ownCell, alien = false) {
 }
 
 // Codes the per-probe handler 1000:61BB acts on but this port does not implement yet. Any other code has no effect there.
-const UNSUPPORTED_PROBE_CODES = new Set([0x45, 0x44, 0x40, 0x64, 0x46, 0x15, 0x14]);
+const UNSUPPORTED_PROBE_CODES = new Set([0x15]);
 const PICKUPS = {
   0x04: { sound: 3, tile: 0x07a, anim: 0x8a9a, animOn1415: false, apply: p => { p.keys = u16(p.keys + 1); } },
   0x05: { sound: 3, tile: 0x155, anim: 0x8ae6, animOn1415: true, apply: (p, s) => { p.energy = u16(p.energy + 0x20); if (s16(p.energy) > 0x40) p.energy = 0x40; s.sounds.push(3); } },
@@ -99,15 +99,22 @@ function probeEffects(state, player, x, y) {
     state.sounds.push(pickup.sound); pickup.apply(player, state);
     if (pickup.animOn1415 || (state.level !== 14 && state.level !== 15)) startAnimation(state, pickup.anim, state.probeIndex);
     writeCell(state, state.probeIndex, pickup.tile, 0);
-  } else if (code === 0x17) player.onIntex = 0xffff;
+  } else if ((code === 0x45 && s16(state.burning) > 0) || code === 0x44) hurt(state, player, 0x10);
+  else if (code === 0x40) { if (state.movedDirections & 2) { player.moveMask = 0x0d; hurt(state, player, 0x10); } }
+  else if (code === 0x64) { if (state.movedDirections & 1) { player.moveMask = 0x0e; hurt(state, player, 0x10); } }
+  else if (code === 0x46) { if (s16(state.timer60) > 0x28 && (state.timer60 & 3) === 0) hurt(state, player, 1); }
+  else if (code === 0x14) { state.skipSafe = true; player.energy = u16(player.energy - 8); state.sounds.push(0x0f); }
+  else if (code === 0x17) player.onIntex = 0xffff;
   else if (code === 0x2f) { player.conveyor |= 2; state.skipSafe = true; }
   else if (code === 0x27) { player.conveyor |= 1; state.skipSafe = true; }
   else if (code === 0x3f) { player.conveyor |= 8; state.skipSafe = true; }
   else if (code === 0x37) { player.conveyor |= 4; state.skipSafe = true; }
   else if (code === 0x02) exitTouched(state);
   else if (code === 0x0a && (state.level === 16 || state.level === 17)) unsupported(state, 'Level 16/17 objective cell 0x0A');
-  else if (UNSUPPORTED_PROBE_CODES.has(code) && !(code === 0x45 && s16(state.burning) <= 0)) unsupported(state, `Cell effect 0x${code.toString(16)} at (${x}, ${y})`);
+  else if (UNSUPPORTED_PROBE_CODES.has(code)) unsupported(state, `Cell effect 0x${code.toString(16)} at (${x}, ${y})`);
 }
+// 1000:61DC and its copies: hurt flash, energy loss, sound 0x0F.
+function hurt(state, player, amount) { player.hurt = true; player.energy = u16(player.energy - amount); state.sounds.push(0x0f); }
 
 // 1000:6286: the exit only counts on some levels or once the self-destruct or boss has started.
 function exitTouched(state) {

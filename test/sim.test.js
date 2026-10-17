@@ -60,9 +60,15 @@ test('a key pickup increments keys, plays sound 3, clears the cell type and star
   assert.equal(player.keys, 1); assert.deepEqual(state.sounds, [3]); assert.equal(state.types[cell], 0); assert.equal(state.tiles[cell], 0x7a);
   tickAnimations(state); assert.equal(state.tiles[cell], 7); tickAnimations(state); tickAnimations(state); assert.equal(state.animations.filter(Boolean).length, 0);
 });
+test('hazard cells: 0x44 always, 0x40 only when moving left (and it blocks left next frame)', () => {
+  const lava = fixture({ [at(92, 92)]: 0x44 }); updatePlayer(lava.state, lava.player, 0);
+  assert.equal(lava.player.energy, 64 - 16 * 2, 'two probes (X and Y passes) touch the cell'); assert.ok(lava.player.hurt); assert.deepEqual(lava.state.sounds, [0x0f, 0x0f]);
+  const barrier = fixture({ [at(92, 92)]: 0x40 }); updatePlayer(barrier.state, barrier.player, 0); assert.equal(barrier.player.energy, 64);
+  updatePlayer(barrier.state, barrier.player, INPUT.LEFT); assert.equal(barrier.player.energy, 64 - 32); assert.equal(barrier.player.moveMask, 0x0d);
+});
 test('unimplemented cell effects stop strict runs with a diagnostic', () => {
-  const { state, player } = fixture({ [at(92, 92)]: 0x44 });
-  assert.throws(() => updatePlayer(state, player, 0), /Cell effect 0x44/);
+  const { state, player } = fixture({ [at(92, 92)]: 0x15 });
+  assert.throws(() => updatePlayer(state, player, 0), /Cell effect 0x15/);
 });
 test('firing spends ammo, plays the weapon sound, creates a shot at the facing offset and respects the fire-rate mask', () => {
   const { state, player } = fixture();
