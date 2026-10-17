@@ -7,3 +7,7 @@
 .env
 .env.*
 !.env.example
+# Disposable emulator copies, captures and traces (may contain original data).
+/.work/
+# Ghidra project (contains the original executable).
+/ghidra/

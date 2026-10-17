@@ -18,7 +18,7 @@ Scope: all **135 game/distribution files** recursively found in `/Users/valentin
 | `.doc` | 1 | [plain-text Sound Blaster compatibility note](doc.md) | Verified ASCII text |
 | `.dsk` | 1 | [Turbo C context/desktop data](dsk.md) | Verified identifying header; binary schema incomplete |
 | `.ehf` | 15 | [LZHUF-compressed four-plane sprite sheet](ehf.md) | Verified compression; visually verified planar interpretation |
-| `.ex_` | 1 | [alternate DOS MZ executable](ex_.md) | Verified MZ container; variant difference observed |
+| `.ex_` | 1 | [alternate DOS MZ executable](ex_.md) | Verified: original build; `ALIEN.EXE` differs only by a disabled passcode compare |
 | `.exe` | 3 | [DOS MZ executables](exe.md) | Verified MZ headers and declared lengths |
 | No extension | 1 | [REM](extensionless.md) | Verified byte identity; filename provenance unknown |
 | `.huf` | 19 | [LZHUF-compressed map resources](huf.md) | Verified compression; map schema incomplete |
