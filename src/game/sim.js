@@ -453,9 +453,12 @@ export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
   if (state.recordFlip) Object.assign(state.atFlip, { objects: state.objects.map(r => ({ ...r })), players: state.players.map(p => ({ ...p })),
     generatorsDestroyed: state.generatorsDestroyed });
   // 2EF5:12B4: the frame end takes the INT 8 count since the previous one; 5 or more makes this a lag frame.
-  state.lag = !state.demoMode && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
+  state.lag = !state.demoMode && !state.demoRecord && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0; // demo mode cs:8716 is 1 while recording
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; startBoss(state); } // 1000:38C6
+  // 1000:3935: while recording (cs:8716 = 1) the input byte goes into the buffer the attract demo plays (cs:8719); after
+  // 0x400 bytes recording stops and 3956 writes the buffer to demo.dat.
+  if (state.demoRecord) { const r = state.demoRecord; r.buffer[r.index++] = input & 0xff; if (r.index >= 0x400) { state.demoSaved = r.buffer; state.demoRecord = null; } }
   // 1000:3928: the demo's 1024th input byte ends the main loop before the player update (POP AX / RET at 39BC).
   if (demoEnd) { state.frame++; state.levelOver = 'demo'; return; }
   if (!state.endSequence) for (const player of state.players) if (player.alive) updatePlayer(state, player, input);

@@ -3,6 +3,13 @@
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { openExe } from '../src/game/exe.js';
+
+// The recording and exit cheat words (handlers 1000:7FDA and 801C in the table at cs:7EF4), read from the user's executable.
+const exe = await openExe(new Uint8Array(await readFile(new URL('../game/ALIEN.EXE', import.meta.url))));
+const cheatWord = handler => { for (let e = 0x7ef4; exe.u16(0x1000, e) !== 0xffff; e += 4) if (exe.u16(0x1000, e + 2) === handler) {
+  let w = ''; for (let q = exe.u16(0x1000, e); exe.u8(0x1000, q) !== 0xff; q++) w += String.fromCharCode(exe.u8(0x1000, q)); return w; } throw new Error(`no cheat ${handler}`); };
 
 const server = await createServer({ configFile: new URL('../vite.config.js', import.meta.url).pathname, server: { port: 0, open: false }, logLevel: 'error' });
 await server.listen();
@@ -24,6 +31,10 @@ try {
   await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
   await page.click('#play');
   await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.display.dac.some(v => v), null, { timeout: 15000 });
+  const logo = await page.evaluate(() => ({ phase: window.__alienBreed.phase, song: window.__alienBreed.music.song ?? null }));
+  check('start-up shows the logos first, without music', () => assert.deepEqual(logo, { phase: 'intro', song: null }));
+  await page.waitForFunction(() => window.__alienBreed.phase === 'title', null, { timeout: 20000 }); // 787 retraces of logos
+  await page.waitForFunction(() => window.__alienBreed.display.dac.some(v => v), null, { timeout: 5000 });
   await page.waitForTimeout(1200); // the title's 64-step fade
   const title = await page.evaluate(() => ({ ...window.__alienBreed.music, reload: window.__alienBreed.timer.reload, state: !!window.__alienBreed.state }));
   check('start-up shows the title with the title song at 96 Hz', () => { assert.equal(title.song, 'title'); assert.equal(title.reload, 0x308c); assert.equal(title.state, false); });
@@ -105,6 +116,25 @@ try {
   await page.waitForFunction(() => window.__alienBreed.music.song === 'ingame', null, { timeout: 10000 });
   const back = await page.evaluate(() => ({ frame: window.__alienBreed.state.frame, diagnostic: document.getElementById('diagnostic').hidden }));
   check('leaving the Intex resumes the level with the in-game song', () => assert.ok(back.diagnostic, 'no diagnostic'));
+  // The recording cheat typed in the Intex menu, then R in the level: 0x400 frames are recorded and offered as DEMO.DAT.
+  const typeWord = async word => { for (const c of word) await tap(c === ' ' ? 'Space' : `Key${c}`, 60); };
+  const openIntex = async () => { await tap('KeyX'); await page.waitForFunction(() => window.__alienBreed.music.song === 'intex', null, { timeout: 8000 });
+    await page.waitForTimeout(1500); await tap('KeyZ'); await page.waitForTimeout(400); await tap('KeyZ'); await page.waitForTimeout(2500); };
+  await openIntex(); await typeWord(cheatWord(0x7fda));
+  const armed = await page.evaluate(() => window.__alienBreed.recordArmed);
+  check('the recording cheat word arms recording', () => assert.equal(armed, true));
+  await tap('KeyZ'); // the cursor is still on ABORT from the last visit (it persists in the code segment)
+  await page.waitForFunction(() => window.__alienBreed.music.song === 'ingame', null, { timeout: 10000 });
+  await page.waitForTimeout(300); await tap('KeyR'); await page.waitForTimeout(500);
+  const rec = await page.evaluate(() => ({ index: window.__alienBreed.state.demoRecord?.index ?? -1, lag: window.__alienBreed.state.lag }));
+  check('R starts recording the input bytes with the lag flag at 0', () => { assert.ok(rec.index > 10, `index ${rec.index}`); assert.equal(rec.lag, 0); });
+  await page.locator('#demo-file').waitFor({ state: 'visible', timeout: 25000 });
+  check('after 0x400 frames the recording is offered as DEMO.DAT', () => {});
+  // The exit cheat word: the program ends with the original's text and no music.
+  await openIntex(); await typeWord(cheatWord(0x801c));
+  await page.locator('#dos').waitFor({ state: 'visible', timeout: 5000 });
+  const dos = await page.evaluate(() => ({ text: document.getElementById('dos').textContent.trim().length, canvas: document.getElementById('screen').hidden, running: window.__alienBreed.running }));
+  check('the exit cheat word ends the program with the text-mode message', () => assert.deepEqual([dos.text > 10, dos.canvas, dos.running], [true, true, false]));
   check('no uncaught page errors', () => assert.deepEqual(errors, []));
 } finally {
   await browser.close(); await server.close();

@@ -7,3 +7,4 @@
 button{font:inherit;padding:8px 16px;background:var(--accent);color:#000;border:0;cursor:pointer}button[hidden]{display:none}
 .mode{color:var(--muted);max-width:42ch;margin:0 auto}.help,.debug{color:var(--muted);margin:0;font-size:13px;text-align:center}
 .diagnostic,.preview{margin:0;padding:8px 12px;max-width:960px;border:1px solid var(--warn);color:var(--warn)}
+.dos{margin:0;padding:8px 12px;max-width:960px;background:#000;color:#aaa;font:16px/1.2 monospace;white-space:pre-wrap}

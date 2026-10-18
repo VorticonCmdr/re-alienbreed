@@ -13,7 +13,7 @@ export const intexFiles = exe => ({ computer: exe.string(DS, 0x9af2 + 8), weapon
 // the weapon index, the typewriter sample, the message counter and the cheat ring.
 export function createIntexMemory(exe) {
   return { cs: new Map(), ds: new Map(), menu: exe.u8(CODE, 0x137c), weapon: exe.u16(CODE, 0x3242), choice: exe.u8(CODE, 0x2b15),
-    typed: { on: false, previous: exe.u16(CODE, 0x1517) }, message: exe.u16(CODE, 0x118d), ring: new Uint8Array(128), ringAt: 0, cheats: false };
+    typed: { on: false, previous: exe.u16(CODE, 0x1517) }, message: exe.u16(CODE, 0x118d), ring: new Uint8Array(128), ringAt: 0, cheats: false, recordArmed: false };
 }
 
 // BCD subtraction 1000:6001 (SUB/DAS then SBB/DAS per byte; for valid BCD the decimal difference modulo 10^8).
@@ -211,11 +211,11 @@ export function* intexSession(c) {
   }
   function runCheat(h) {
     if (h === 0x7fd1) { m.cheats = true; c.sound(0); }
-    else if (h === 0x7fda) { c.sound(0); report('Demo recording cheat'); }
+    else if (h === 0x7fda) { m.recordArmed = true; c.sound(0); } // cs:7FE2: R in the main loop starts a recording (1000:364A)
     else if (h === 0x7fe3) state.players[0].keys = 0xffff;
     else if (h === 0x7fec) { if (state.players[1]) state.players[1].keys = 0xffff; }
     else if (h === 0x801b || h === 0x8027) { /* nothing */ }
-    else if (h === 0x801c) report('Cheat word that exits to DOS');
+    else if (h === 0x801c) c.exitProgram(); // jumps to 7ABF, the program exit
     else if (h === 0x8020) c.sound(1);
     else if (h >= 0x8028 && h < 0x8060 && (h - 0x8028) % 7 === 0) { // SI = a 36-byte message, shown for 100 passes
       const from = exe.u16(CODE, h + 1); for (let i = 0; i < 36; i++) m.cs.set(0x1195 + i, exe.u8(CODE, from + i)); m.message = 100;

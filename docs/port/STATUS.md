@@ -1,6 +1,6 @@
 # Port status
 
-Updated 2026-10-18 (title, all levels, Intex, sound effects, FM music; generator, death and countdown runs). Evidence for each claim: [evidence.md](evidence.md);
+Updated 2026-10-18 (start-up logos, demo recording and exit cheats; generator, death and countdown runs). Evidence for each claim: [evidence.md](evidence.md); everything still open: [REMAINING.md](REMAINING.md);
 music driver: [avmfm.md](avmfm.md); Intex: [intex.md](intex.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
@@ -12,8 +12,8 @@ browser; tables, texts, scripts and the music driver are read from the user's fi
 ## Working route
 
 `npm run dev`, open `/game.html`, press **Play** (Z fires and skips screens, X is the action key, arrows move, 1 cycles
-weapons, M shows the map once bought, Esc abandons). Start-up shows the title with its song and menu (players, share
-credits, start game); idling runs the credits, the story pages and the attract demo. A new game starts like the
+weapons, M shows the map once bought, Esc abandons). Start-up shows the three logos (TEAM_17, AVM256 with its sample,
+AL_LOGO; about 11 s, no skip), then the title with its song and menu (players, share credits, start game); idling runs the credits, the story pages and the attract demo. A new game starts like the
 original's: intermission (CARGOBAY and the deck 1 briefing), then level index 1 (`L0MZ`).
 Every exit leads through the intermission (deck lift with the deck-man, briefing, level code) to the next index, carrying
 the player's energy, lives, keys, ammo, weapons, credits and tallies, the random generator and the counters the
@@ -21,8 +21,9 @@ original never resets. After index 18 the ending plays; every finished game ends
 `?level=N` (development) skips the title and starts a new game at index N without the first intermission.
 
 Intex terminals (action key on a terminal cell): boot text with the typewriter, main menu, weapon and tool shops,
-radar map, mission text, statistics, info pages, the cheat and level-code words, and the original's way back into the
-level. The M key opens the map screen for a player who bought the map.
+radar map, mission text, statistics, info pages, the cheat and level-code words (including demo recording: R in the
+level then records 0x400 frames into the attract demo and offers them as `DEMO.DAT`; and the exit word, which ends the
+program with the original's text-mode message), and the original's way back into the level. The M key opens the map screen for a player who bought the map.
 
 In a level: walking, collision, conveyors, one-way cells, hazards, pickups, doors (keys or shooting), all seven
 weapons including bouncing shots, destructible walls with burning debris, aliens and eggs, generators, the
@@ -61,8 +62,8 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): two players, shots more than 3 pixels above the map, the demo-recording and
-  exit-to-DOS cheat words. Not present: the start-up screens before the title (logos and intro).
+- Not implemented (strict stop): two players, shots more than 3 pixels above the map, a level change during a demo
+  recording. The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
 - Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
   it is set only after pauses (fades, the Intex). In-game the PIT runs
   at 120 Hz; interrupts arriving while the frame has them disabled are collapsed and do not tick the music. The share of
@@ -80,5 +81,5 @@ Verified levels, from strongest to weakest:
 ## Next milestone
 
 Original-run comparisons for the remaining new paths (an Intex purchase, a level transition with carried state, the
-intermission timing, the bosses of levels 8 and 17, the countdown's real-time rate outside demo playback), the start-up
-screens, and two players.
+intermission timing, the bosses of levels 8 and 17, the countdown's real-time rate outside demo playback) and two
+players; see [REMAINING.md](REMAINING.md).

@@ -11,6 +11,7 @@ import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './scre
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
 import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
 import { titleLoop, titleFiles } from './title.js';
+import { intro, introFiles } from './intro.js';
 import { intexSession, mapSession, intexFiles, createIntexMemory } from './intex.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
@@ -58,13 +59,16 @@ async function loadCommon(source) {
     deckman: await sprites(deckmanSheetName(exe)),
     // Boss sheets (records 2041:93FA, 93E6, 940E; the file name follows each 8-byte record), swapped in by 1000:6030.
     bossSheets: Object.fromEntries(await Promise.all([0x93fa, 0x93e6, 0x940e].map(async record => [record, await sprites(exe.string(0x2041, record + 8))]))),
-    gameOverSample: await (async () => { const { samples, sampleRate } = decodeVoc(await source.read(gameOverFiles(exe).sample)); const b = audio.createBuffer(1, samples.length, sampleRate); b.copyToChannel(samples, 0); return b; })(),
+    gameOverSample: await decodeSample(await source.read(gameOverFiles(exe).sample)),
     demo: await source.read('DEMO.DAT'), options: { players: assets?.options?.players ?? 0, share: assets?.options?.share ?? 0 },
     songs: Object.fromEntries(await Promise.all(Object.keys(SONGS).map(async song => [song, await source.read(songFile(exe, song))]))),
   };
   const intex = intexFiles(exe);
   assets.computerPicture = await loadPicture(intex.computer); assets.mapPicture = await loadPicture(intex.map);
   assets.weaponSheet = await sprites(intex.weapons); assets.intexMemory ??= createIntexMemory(exe);
+  const introAssets = introFiles(exe);
+  assets.logos = await Promise.all(introAssets.logos.map(async logo => ({ ...logo, ...await loadPicture(logo.name) })));
+  assets.logoSample = await decodeSample(await source.read(introAssets.sample));
   assets.titlePicture = await loadPicture(titleFiles(exe).title); assets.storyPicture = await loadPicture(titleFiles(exe).story);
   // The FM driver programs the PIT itself (fn 4, fn 6, fn 7), which sets the INT 8 rate.
   opl = createOpl();
@@ -114,6 +118,7 @@ function bossPalette(state) {
 function present() {
   image.data.set(toRgba(display.frame, dacToRgb(display.dac))); context.putImageData(image, 0, 0);
   const state = game?.state; if (!state) return;
+  if (state.demoSaved) { offerDemo(state.demoSaved); state.demoSaved = null; }
   const p = state.players[0];
   const skipped = [...new Set(state.diagnostics.map(d => d.message.replace(/ at .*| \(.*/, '')))];
   $('preview-banner').hidden = state.strict;
@@ -130,7 +135,8 @@ function* idle(generator, state) { for (const _ of generator) { if (state) intTi
 // The program after start-up (1000:0831): title music, then the title loop, games and attract demos for ever.
 function* program(devLevel) {
   if (devLevel !== null) return yield* gameSession(devLevel, false);
-  music.start('title', assets.songs.title, { stopFirst: false }); // 1000:0BAD
+  phase = 'intro'; yield* intro({ display, logos: assets.logos, playSample: () => effects.playBuffer(assets.logoSample) }); // 1000:0761-0767
+  phase = 'title'; music.start('title', assets.songs.title, { stopFirst: false }); // 1000:0BAD
   for (;;) {
     const input = () => keyboard.inputByte();
     const choice = yield* titleLoop({ exe: assets.exe, display, font: assets.font, text: assets.text, title: assets.titlePicture, story: assets.storyPicture,
@@ -139,7 +145,7 @@ function* program(devLevel) {
     music.start('title', assets.songs.title, { stopFirst: true }); // 1000:204E / 2053 (the music was stopped at 2017)
   }
 }
-let lastResult = null;
+let lastResult = null, phase = null;
 
 // The Intex (1000:2588) or the M screen (33C6), then their common way back (28B3 / 3465): a frame end that sees all
 // the ticks since the last one (so a lag frame follows), two game frames on a black palette, the fade-in, and for
@@ -150,11 +156,11 @@ function* terminal(state, player, kind) {
     input: () => keyboard.inputByte(), ticks: () => retrace.ticks, report: state.report };
   if (kind === 'intex') {
     yield* idle(intexSession({ ...common, pictures: { computer: assets.computerPicture }, weaponSheet: assets.weaponSheet, descriptor: assets.descriptor,
-      scancode: () => keyboard.lastScancode, consumeScancode: () => keyboard.consumeScancode(), sound: id => effects.play(id),
+      scancode: () => keyboard.lastScancode, consumeScancode: () => keyboard.consumeScancode(), sound: id => effects.play(id), exitProgram: () => { throw new ProgramExit(); },
       music: { start: song => music.start(song, assets.songs[song], { stopFirst: false }), stop: () => music.stop() } }), state);
   } else yield* idle(mapSession({ ...common, picture: assets.mapPicture }), state);
   intTicks(state); yield; // 3000:01B0
-  state.lag = !state.demoMode && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
+  state.lag = !state.demoMode && !state.demoRecord && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
   inGame = true;
   for (let i = 0; i < 2; i++) { // 37D6 twice
     state.sounds = []; stepFrame(state, keyboard.inputByte(), retrace.ticks);
@@ -204,16 +210,21 @@ function* gameSession(firstLevel, demo) {
       const map = mapRequested(state, keyboard.lastScancode); // 1000:35F2
       if (map.consumed) keyboard.consumeScancode();
       if (map.player) { yield* terminal(state, map.player, 'map'); continue; }
+      // 1000:364A: R (make code 0x13, not consumed) after the recording cheat starts recording from index 0, again on every
+      // pass while it is the last scancode; the bytes overwrite the buffer the attract demo plays.
+      if (keyboard.lastScancode === 0x13 && assets.intexMemory.recordArmed) state.demoRecord = { buffer: assets.demo, index: 0 };
       yield;
     }
     inGame = false;
     const next = nextStage(level, result, state.levelCode);
+    if (result === 'previous' && state.demoRecord) throw new UnsupportedPath('Level change while recording a demo (1000:1E9D skips the player restore)', {});
     if (result === 'previous') { // 1000:3526: back one level; the fade runs with the music still playing
       yield* idle(fadeOut(display), state);
       carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
       if (next.level < 0) throw new UnsupportedPath('Level index below 0', {});
       level = next.level; continue;
     }
+    if (state.demoRecord && result !== 'gameover' && result !== 'aborted') throw new UnsupportedPath('Level change while recording a demo (1000:1E9D skips the player restore)', {});
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
     if (next.kind === 'level') {
@@ -230,12 +241,20 @@ function* gameSession(firstLevel, demo) {
         descriptor: assets.descriptor, input, report: state.report, exitTaken: true }), state);
     }
     if (demo) return 'demo';
+    if (state.demoRecord) return 'Recording interrupted: game over.'; // 1000:2043: no game-over screen while cs:8716 is set
     const picture = yield loadPicture(gameOverFiles(assets.exe).picture); // 1000:4109, then the title
     yield* idle(gameOver({ display, picture, input, playSample: () => effects.playBuffer(assets.gameOverSample) }), state);
     return result === 'aborted' ? 'Game abandoned.' : result === 'complete' ? 'Game complete.' : 'Game over.';
   }
 }
+// 1000:3956-3981 creates demo.dat in the current directory and writes the 0x400 bytes. A page cannot write into the
+// game folder, so the file is offered as a download; the attract demo already plays it (the buffer is shared).
+function offerDemo(bytes) {
+  const link = $('demo-file'); URL.revokeObjectURL(link.href);
+  link.href = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], { type: 'application/octet-stream' })); link.hidden = false;
+}
 const strictReport = message => { if (!$('preview').checked) throw new UnsupportedPath(message, {}); };
+async function decodeSample(bytes) { const { samples, sampleRate } = decodeVoc(bytes), b = audio.createBuffer(1, samples.length, sampleRate); b.copyToChannel(samples, 0); return b; }
 async function loadPicture(name) { const bytes = decompressLzhuf(await assets.source.read(name)); return { pixels: bytes.subarray(0, 64000), palette: bytes.subarray(64000, 64768) }; }
 
 let waiting = false, resumeWith;
@@ -277,7 +296,16 @@ function tick(now) {
     }
     present();
     requestAnimationFrame(tick);
-  } catch (error) { present(); showDiagnostic(error); }
+  } catch (error) { present(); if (error instanceof ProgramExit) exitToDos(); else showDiagnostic(error); }
+}
+// 1000:7ABF: music stopped (driver functions 7, 8, 3), the voice driver and the timer reset, text mode 2, then INT 21h/09
+// prints the '$'-terminated text at DS:5BBA ([5A00] = 0 on this path) and 4Ch ends the program. The page shows that text
+// in a plain block instead of an 80x25 text screen.
+class ProgramExit extends Error {}
+function exitToDos() {
+  music.stop(); effects.stop(); running = false; inGame = false;
+  let text = ''; for (let p = 0x5bba, n = 0; assets.exe.u8(0x2041, p) !== 0x24 && n < 512; p++, n++) { const c = assets.exe.u8(0x2041, p); if (c >= 0x20 || c === 10) text += String.fromCharCode(c); }
+  $('dos').textContent = text; $('dos').hidden = false; canvas.hidden = true; $('setup').hidden = false;
 }
 function finish(message) {
   running = false;
@@ -285,7 +313,7 @@ function finish(message) {
 }
 
 function start() {
-  audio?.resume(); $('setup').hidden = true; $('diagnostic').hidden = true; running = true; accumulator = 0; last = performance.now();
+  audio?.resume(); $('setup').hidden = true; $('diagnostic').hidden = true; $('dos').hidden = true; canvas.hidden = false; running = true; accumulator = 0; last = performance.now();
   canvas.focus(); requestAnimationFrame(tick);
 }
 
@@ -318,4 +346,4 @@ if (import.meta.env.DEV) {
   } catch { status('Open your original game folder to start.'); }
 } else status('Open your original game folder to start. Files are read in your browser and not uploaded.');
 
-window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; }, get music() { return { song: music?.song, scheduled: musicClock } }, get timer() { return { ...timer }; } };
+window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; }, get music() { return { song: music?.song, scheduled: musicClock } }, get timer() { return { ...timer }; }, get phase() { return phase; }, get recordArmed() { return !!assets?.intexMemory?.recordArmed; } };
