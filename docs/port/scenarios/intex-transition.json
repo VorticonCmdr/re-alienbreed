@@ -1,0 +1,15 @@
+{
+ "scenario": "intex-transition",
+ "description": "A one-player game in the original: at the level index 1 start player 1 is placed on the Intex terminal (cell 76,38) with credits 0x00030105 and owned weapons 0x01; in the Intex weapon 3 and keys are bought, ammo is refused for lack of credits and the cheat word enabling = and - is typed; after twelve shots = ends the level. The port's Intex is driven through the same purchases, and the port's save, between-levels ticks and level start are applied to the original's state at the level-end save.",
+ "verify": "npm run verify:runtime",
+ "build": { "ALIEN.EXE": "0787a2ca63e712ef1e2278fd5a78d9a0ea1e9ca0197398ab9e4cb684b067e0c7", "SETUP.DAT": "shipped file" },
+ "emulator": { "engine": "dosbox-automation 0.84.0-vc1 (f6d9b), dosbox-mcp bridge 0.1.1", "cycles": "bridge default" },
+ "recipe": [
+  "Fresh instance; boot to the passcode, three keys; press fire through the title and the CARGOBAY intermission. Execute breakpoint at live 01F5:1F8D with cs:[8716] = 0 (the level 1 start).",
+  "There: player 1 x, y (1236:BE1C) = 1240, 632; credits +5E/+60 (1236:BE7A) = 0105 0003; owned weapons +3E (1236:BE5A) = 0001. Then a breakpoint at live 01F5:35BF, right after the level-end save CALL 21A6 at 35BC (21A6 also runs when the Intex opens, at 35EC).",
+  "Action (X) opens the Intex; fire through the boot text. Each further step repeats its key until memory shows the effect, because the screens type their text first and ignore keys meanwhile: menu cursor cs:137C = 0, fire; weapon index cs:3242 = 1 (right), choice cs:2B15 = 1 (up), fire until the credits change; cursor = 1, fire; tool selection cs:2B15 = 3, fire until the credits change; = 1, fire (refused); = 5, fire; the cheat word of handler 7FD1 until cs:7FD9 = FF; cursor = 7, fire.",
+  "Twelve presses of fire in the level, then = (the cheat exit). At 35BF snapshot; then fire through the DECKLIFT intermission to the level 2 start (01F5:1F8D) and snapshot again."
+ ],
+ "alignment": { "kind": "outcome", "rule": "The Intex is compared by its result (the player record and the cheat flag), the transition by the state at the level-end save against the next level's start.", "negativeControl": "one INT 8 tick fewer between the levels changes the accumulator" },
+ "captures": { "location": ".work/captures (local only)", "files": ["intex-transition.json"] }
+}

@@ -275,7 +275,7 @@ function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; 
 // Tileset id per level, byte table cs:4021 in the executable.
 export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 
-export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals, party }) {
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals, party, recording = false }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frameTicks: 0, loadingFile: false, countdownFrozen: false, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
@@ -336,7 +336,8 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     tally: new Uint8Array(8), moveMask: 0, x: 0, y: 0, alive: inGame, ghost: inGame, index, cell: -1, safeX: 0, safeY: 0, invulnerable: 0 });
   const p1 = crew.inGame[0] ? makePlayer(0, 0xb0, 0x68) : absent(0, false);
   state.players = [p1];
-  if (crew.count === 2 || crew.inGame[1] || party) state.players.push(crew.inGame[1] && !demoMode ? makePlayer(1, 0xc0, 0x78) : absent(1, crew.inGame[1]));
+  // 1E9D: no player 2 while cs:8716 is set (demo playback, or a recording that runs into a new level).
+  if (crew.count === 2 || crew.inGame[1] || party) state.players.push(crew.inGame[1] && !demoMode && !recording ? makePlayer(1, 0xc0, 0x78) : absent(1, crew.inGame[1]));
   state.spawnPoints = [[0x28, 1], [0x29, 2], [0x34, 3]].flatMap(([code, type]) => { // 1000:48D3
     const points = []; for (let y = 8; y <= 0x5f8; y += 16) for (let x = 8; x <= 0x778; x += 16) if (x >= 16 && y >= 16 && codeAt(x, y) === code) points.push({ x, y, type, cooldown: 0 });
     return points;
@@ -418,6 +419,8 @@ export function mainLoopKeys(state, scancode, abortScancode, cheats = false) {
 // [AF84], cs:4035/4037 (reset only by some decor in 3D10), [8182], cs:5A43, cs:5671, cs:5119, the INT 8 work [AD4C]
 // and cs:7969, and the level 16/17 spawn timer cs:602A.
 const CARRIED = ['frameTicks', 'lag', 'aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer', 'scriptedSpawn'];
+// What 21A6 saves at a level end and the next level start restores (1E15/1EFA), with the in-game flags and count.
+export const partyOf = state => ({ count: state.playerCount, inGame: state.players.map(p => p.alive), saved: state.players.map(savePlayer) });
 export const carriedGlobals = state => Object.fromEntries(CARRIED.map(k => [k, k === 'rng' ? { ...state.rng } : state[k]]));
 
 // 1000:35F2: M (make code 0x32) after the frame, without the end sequence, for a player who owns the map.

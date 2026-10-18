@@ -58,6 +58,8 @@ Verified levels, from strongest to weakest:
   ticks (start with three generators counted, a partial restore).
   Shots above the map on level index 11: the word the original reads 1-8 pixels above matches the port's model
   (scenario [shot-above-map.json](scenarios/shot-above-map.json); 5 pixels above is not modelled).
+  An Intex visit (weapon and tool purchases, a refused purchase, a cheat word) and a level transition with the carried
+  record and globals (scenario [intex-transition.json](scenarios/intex-transition.json)).
   Two players in the attract demo (player 2 added at the level start, and TWO selected): both records, the camera
   midpoint, the in-game flags and the RNG (scenario [two-players.json](scenarios/two-players.json)).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
@@ -71,7 +73,7 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): a level change during a demo recording, a panel redraw for a player who has just lost the
+- Not implemented (strict stop): a panel redraw for a player who has just lost the
   last life (lives 0xFF; only during the death spin, before the record is freed), and shot probes outside the map that read memory the port does not model (5 pixels above the map, an active
   object record). The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
 - Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
@@ -90,6 +92,6 @@ Verified levels, from strongest to weakest:
 
 ## Next milestone
 
-Original-run comparisons for the remaining new paths (an Intex purchase, a level transition with carried state, the
-intermission timing, the bosses of levels 8 and 17, the countdown's real-time rate outside demo playback) and two
-players; see [REMAINING.md](REMAINING.md).
+Original-run comparisons for the remaining paths: a real two-player game (alien targets, kill credit, shared credits,
+dropping out, carrying both players), the intermission timing, the bosses of levels 8 and 17 and the countdown's
+real-time rate outside demo playback; see [REMAINING.md](REMAINING.md).

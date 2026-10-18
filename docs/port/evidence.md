@@ -221,3 +221,15 @@ the lag flag forced to 0. Captures in `.work/captures` (local), checked by `npm 
 | Claim | Level | Where |
 | --- | --- | --- |
 | At the end of every pass of `37D6`, if `[B086]` equals the pause key (SETUP.DAT `0x64`, P in the shipped file), the game busy-waits until `[B086]` is its break code, sets `cs:37D3` (the countdown freeze), waits for the make code again and for its break, and clears `cs:37D3` (also cleared on every other pass). No frames run in between; INT 8 keeps the music, the timer and `[8184]` going, so the countdown runs until the first release and the next frame is a lag frame | static | `1000:3A98`–`3AC5` |
+
+## Intex purchases and a level transition against the original
+
+Scenario `scenarios/intex-transition.json` (partial restore: player placed on the level 1 terminal, credits and owned
+weapons poked; outcome comparisons, not frame-by-frame).
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| The weapon shop sells weapon 3 for 24000 BCD (30105 → 6105, with borrows), sets the owned bit and the weapon and adds 0x80 ammo; the tool shop sells keys for 5000 (+6) and refuses ammo when the credits are short; the cheat word of `7FD1` sets `cs:7FD9`. The port's Intex driven through the same steps ends with the same credits, owned weapons, weapon, keys, lives, map flag, energy and cheat flag; the ammo matches after the shots that followed (one with weapon 1, twelve with weapon 3) | independent runtime (partial restore, outcome) | `npm run verify:runtime` |
+| The level-end save is the `CALL 21A6` at `1000:35BC` (exit taken); `21A6` also runs when the Intex opens (`35EC`). The next level restores energy, lives, keys, ammo, weapon, owned weapons, credits, map flag, the tally bytes `+63`..`+6A` and `+69` exactly; the frame counter, the RNG, cs:4035/4037, `[8182]`, cs:5A43/5671/5119 and cs:602A are unchanged by the intermission; `[AD4C]` and cs:7969 advance by every INT 8 tick between the save and the next start (788 ticks: 47180 → 37980, cycle 8 → 9), so the file loads do not pause that work; `[7B4F]` is reset to 15. The port's `partyOf`, `timerTick` and `startLevel` reproduce all of these | independent runtime (partial restore, outcome) | `npm run verify:runtime` |
+| `[8184]` (INT 8 runs since the last frame end) is 79 at the level 2 start, so the intermission's frame ends reset it; the port keeps counting through the intermission. Both exceed 5, so the first pass is a lag frame either way | observed; approximation | — |
+| Player 1's level start (`1DB9`–`1E8E`) tests only `[B096]` and always restores the saved values; the demo/recording test `cs:8716` at `1E9D` only guards player 2. A level change during demo playback or a recording therefore restores player 1, skips the intermission (`1986`) and creates no player 2; the demo index `cs:8717` keeps counting (it is reset only when a demo starts, `0A42`) | static | `1000:1DB9`–`1F73`, `0A42` |

@@ -7,7 +7,7 @@ import { createFmDriver, createMusic } from '../src/game/fmdriver.js';
 
 const root = new URL('../', import.meta.url), game = new URL('game/', root);
 const required = ['.work/captures/avmfm-title-1000.json', '.work/captures/avmfm-ingame-3000.json', '.work/captures/boss5-run2-hit5.json', '.work/captures/boss5-run2-hit115.json',
-  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames', 'shot-above-y40', 'shot-above-y39', 'shot-above-y38', 'two-players-demo', 'two-selected-demo'].map(n => `.work/captures/${n}.json`)];
+  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames', 'shot-above-y40', 'shot-above-y39', 'shot-above-y38', 'two-players-demo', 'two-selected-demo', 'intex-transition'].map(n => `.work/captures/${n}.json`)];
 const missing = required.filter(p => !existsSync(new URL(p, root)));
 if (missing.length) { console.error(`Missing runtime captures: ${missing.join(', ')}`); process.exit(2); }
 let checks = 0;
@@ -231,5 +231,79 @@ for (const [name, song, file] of CAPTURES) {
   check('demo with TWO selected: player 2 never created drops out on the first pass; frame 100 matches', () => assert.deepEqual(
     { camera: [g.camera.x, g.camera.y], flags: [g.players[0].alive ? 0xffff : 0, p2.alive ? 0xffff : 0, g.playerCount], p1: [g.players[0].x, g.players[0].y],
       p2: { type: p2.type, energy: p2.energy, lives: p2.lives, invulnerable: p2.invulnerable, x: p2.x, y: p2.y, frame: p2.frame, active: !!p2.active }, rng: [g.rng.s & 0xffff, g.rng.s >>> 16, g.rng.c] }, ghost));
+}
+// An Intex visit and a level transition in a one-player game (docs/port/scenarios/intex-transition.json, partial restore:
+// player 1 placed on the level 1 terminal with credits 30105 and owned weapons 0x01). (1) The port's Intex driven through
+// the same purchases ends with the original's record. (2) The port's save, between-levels ticks and level start applied
+// to the original's state at the level-end save give the original's level 2 start.
+{
+  const { exeView } = await import('../src/game/exe.js');
+  const { decodeMap, levelMapNames } = await import('../src/game/level.js');
+  const { decompressLzhuf } = await import('../src/lzhuf.js');
+  const { decodePlanar } = await import('../src/formats.js');
+  const { readTables, startLevel, levelTileset, timerTick, partyOf, carriedGlobals } = await import('../src/game/sim.js');
+  const { intexSession, intexFiles, createIntexMemory } = await import('../src/game/intex.js');
+  const { createDisplay, cutFont, createTextState } = await import('../src/game/screens.js');
+  const { frameDescriptor } = await import('../src/game/sprites.js');
+  const exe = exeView(new Uint8Array(await readFile(new URL('ALIEN.EXE', game)))), tables = readTables(exe);
+  const file = async n => new Uint8Array(await readFile(new URL(n.toUpperCase(), game)));
+  const capture = JSON.parse(await readFile(new URL('.work/captures/intex-transition.json', root), 'utf8'));
+  const record = snap => { const b = Buffer.from(snap.records, 'base64'), w = o => b.readUInt16LE(o);
+    return { x: b.readInt16LE(0), y: b.readInt16LE(2), type: w(0xe), energy: w(0x2e), keys: w(0x2c), owned: w(0x3e), ammo: w(0x42), weapon: b[0x5a], lives: b[0x5b],
+      credits: (w(0x5e) | w(0x60) << 16) >>> 0, map: b[0x62], tally: [...b.subarray(0x63, 0x6b)], moveMask: w(0x69) }; };
+  const before = record(capture.before), save = record(capture.save), next = record(capture.level2);
+  // (1) The Intex: hold a key until the shop index, the choice, the menu cursor or the credits change, as the DOSBox driver did.
+  const files = intexFiles(exe), memory = createIntexMemory(exe), pic = async n => { const b = decompressLzhuf(await file(n)); return { pixels: b.subarray(0, 64000), palette: b.subarray(64000, 64768) }; };
+  const player = { ...before, tally: new Uint8Array(before.tally), alive: true, index: 0 };
+  const intexState = { players: [player], level: 1, types: new Uint16Array(120 * 96), sounds: [], diagnostics: [], strict: true, report: m => { throw new Error(m); } };
+  let held = 0, scan = 0, done = false;
+  const g = intexSession({ exe, display: createDisplay(), font: cutFont(decompressLzhuf(await file(exe.string(0x2041, 0x9a8c + 8))).subarray(0, 64000)), text: createTextState(), memory, player, state: intexState,
+    pictures: { computer: await pic(files.computer) }, weaponSheet: decodePlanar(decompressLzhuf(await file(files.weapons))).pixels, descriptor: n => frameDescriptor(exe, n),
+    input: () => held, ticks: () => 2, report: intexState.report, scancode: () => scan, consumeScancode: () => { scan = 0; }, sound: () => {}, exitProgram: () => { throw new Error('exit'); }, music: { start: () => {}, stop: () => {} } });
+  const run = n => { for (let i = 0; i < n && !done; i++) done = !!g.next().done; };
+  const press = bits => { held = bits; run(6); held = 0; run(6); };
+  const until = (bits, test) => { for (let i = 0; i < 40 && !test(); i++) { press(bits); run(30); } assert.ok(test(), `no effect from input ${bits}`); };
+  const toScan = new Map(); for (let p = 0x818c; exe.u8(0x2041, p) !== 0xff; p += 2) toScan.set(exe.u8(0x2041, p + 1), exe.u8(0x2041, p));
+  let word = ''; for (let e = 0x7ef4; exe.u16(0x1000, e) !== 0xffff; e += 4) if (exe.u16(0x1000, e + 2) === 0x7fd1) for (let q = exe.u16(0x1000, e); exe.u8(0x1000, q) !== 0xff; q++) word += String.fromCharCode(exe.u8(0x1000, q));
+  run(400); for (let i = 0; i < 8; i++) { press(0x10); run(100); } run(400);
+  until(8, () => memory.menu === 0); press(0x10); run(400);
+  until(1, () => memory.weapon === 1); until(8, () => memory.choice === 1); until(0x10, () => player.credits !== before.credits); run(400);
+  until(4, () => memory.menu === 1); press(0x10); run(400);
+  until(4, () => memory.choice === 3); const keysPrice = player.credits; until(0x10, () => player.credits !== keysPrice); run(100);
+  until(8, () => memory.choice === 1); const ammoPrice = player.credits; press(0x10); run(100); const refused = player.credits === ammoPrice;
+  until(4, () => memory.choice === 5); press(0x10); run(400);
+  for (const ch of word) { scan = toScan.get(ch.charCodeAt(0)); run(3); scan = 0; run(3); }
+  until(8, () => memory.menu === 7); press(0x10); run(600);
+  // The original then fired 13 shots (tally +63 = 0x13): one with weapon 1 before the Intex opened, twelve with weapon 3.
+  const shots = save.tally[0] >> 4 & 15 ? (save.tally[0] >> 4) * 10 + (save.tally[0] & 15) : save.tally[0];
+  check('Intex purchases: weapon 3 (BCD borrow), keys, a refused ammo; credits, weapons, keys, lives, map, energy and the cheat flag match', () => {
+    assert.ok(done); assert.ok(refused); assert.equal(memory.cheats, true);
+    assert.deepEqual([player.credits, player.owned, player.weapon, player.keys, player.lives, player.map, player.energy], [save.credits, save.owned, save.weapon, save.keys, save.lives, save.map, save.energy]);
+    assert.equal(player.ammo - tables.ammoCost[1] - (shots - 1) * tables.ammoCost[3], save.ammo, 'ammo +0x80, then the shots');
+  });
+  // (2) The transition, through the port's own code: partyOf (21A6), the INT 8 ticks between the save and the next start,
+  // carriedGlobals and startLevel (1E15 restore, 3BA6 placement).
+  const G = capture.save, rngOf = r => ({ s: ((r[2] | r[3] << 8) << 16 | (r[0] | r[1] << 8)) >>> 0, c: r[4] & 1 });
+  const p1 = { ...save, tally: Uint8Array.from(save.tally), alive: true }, p2 = { energy: 0, lives: 0, keys: 0, ammo: 0, weapon: 0, owned: 0, credits: 0, map: 0, tally: null, moveMask: 0, alive: false };
+  const end = { players: [p1, p2], playerCount: 1, frameTicks: G.f8184, lag: G.lag, aliensSuppressed: false, rng: rngOf(G.rng), frameCounter: G.af84, timer60: G.cs.t4035, timer104: G.cs.t4037,
+    burning: G.f8182, spreadCounter: G.cs.s5a43, bounceCounter: G.cs.b5671, spawnCounter: G.cs.s5119, tickAccumulator: G.ad4c, secondCycle: G.cs.c7969, scriptedSpawnTimer: G.cs.t602a,
+    scriptedSpawn: null, levelTenTimer: G.t7b4f, loadingFile: false, countdownFrozen: false, selfDestruct: false, sounds: [] };
+  const party = partyOf(end);
+  for (let i = 0; i < capture.level2.b078 - G.b078; i++) timerTick(end);
+  const map = decodeMap(decompressLzhuf(await file(levelMapNames(exe)[2])));
+  const s2 = startLevel({ tables, map, level: 2, tileset: levelTileset(exe, 2), party, globals: carriedGlobals(end) }), q = s2.players[0], L = capture.level2;
+  check('level transition: the saved record comes back in the next level (energy, lives, keys, ammo, weapon, owned, credits, map, tallies, +69)', () =>
+    assert.deepEqual({ energy: q.energy, keys: q.keys, owned: q.owned, ammo: q.ammo, weapon: q.weapon, lives: q.lives, credits: q.credits, map: q.map, tally: [...q.tally], moveMask: q.moveMask },
+      { energy: next.energy, keys: next.keys, owned: next.owned, ammo: next.ammo, weapon: next.weapon, lives: next.lives, credits: next.credits, map: next.map, tally: next.tally, moveMask: next.moveMask }));
+  check('level transition: position, camera and the carried globals (RNG, frame counter, timers, counters, INT 8 accumulator and cycle)', () => {
+    assert.deepEqual([q.x, q.y, s2.camera.x, s2.camera.y], [next.x, next.y, Buffer.from(L.camera).readInt16LE(0), Buffer.from(L.camera).readInt16LE(2)]);
+    assert.deepEqual({ rng: s2.rng, frameCounter: s2.frameCounter, timer60: s2.timer60, timer104: s2.timer104, burning: s2.burning, spread: s2.spreadCounter, bounce: s2.bounceCounter, spawn: s2.spawnCounter,
+      acc: s2.tickAccumulator, cycle: s2.secondCycle, spawnTimer: s2.scriptedSpawnTimer, levelTen: s2.levelTenTimer },
+    { rng: rngOf(L.rng), frameCounter: L.af84, timer60: L.cs.t4035, timer104: L.cs.t4037, burning: L.f8182, spread: L.cs.s5a43, bounce: L.cs.b5671, spawn: L.cs.s5119, acc: L.ad4c, cycle: L.cs.c7969, spawnTimer: L.cs.t602a, levelTen: L.t7b4f });
+  });
+  check('level transition: one INT 8 tick fewer between the levels is detected', () => {
+    const short = { ...end, tickAccumulator: G.ad4c, secondCycle: G.cs.c7969, sounds: [] }; for (let i = 1; i < capture.level2.b078 - G.b078; i++) timerTick(short);
+    assert.notEqual(short.tickAccumulator, L.ad4c);
+  });
 }
 console.log(`runtime checks: ${checks} passed`);

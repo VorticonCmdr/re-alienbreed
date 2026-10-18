@@ -7,7 +7,7 @@ import { buildGamePalette, dacToRgb, alienSheetName, redAlertPalette, levelStart
 import { createHud, drawHud, blitPanel } from './hud.js';
 import { createFramebuffer, drawMap, drawObjects, drawShots, toRgba, SCREEN_WIDTH } from './render.js';
 import { frameDescriptor, drawSprite } from './sprites.js';
-import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, mapRequested, nextStage, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
+import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, mapRequested, nextStage, savePlayer, carriedGlobals, partyOf, timerTick, UnsupportedPath } from './sim.js';
 import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './screens.js';
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
 import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
@@ -81,7 +81,7 @@ async function loadCommon(source) {
 }
 
 // 1000:1937-1FC1 for one level: tiles, map, palette, alien sheet, then the level start and its two warm-up frames.
-async function loadLevel(level, carried, demoMode = 0) {
+async function loadLevel(level, carried, demoMode = 0, record = null) {
   const { source, exe, tables } = assets;
   const sheetBytes = await Promise.all(levelTileSheetNames(exe, level).map(name => source.read(name)));
   let map = decodeMap(decompressLzhuf(await source.read(assets.mapNames[level])));
@@ -96,7 +96,8 @@ async function loadLevel(level, carried, demoMode = 0) {
   // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
   const aliens = decodePlanar(decompressLzhuf(await source.read(alienSheetName(exe, level)))).pixels;
   const sheets = { 0xb409: assets.players, 0xadd2: assets.explosions, 0xb0b4: [aliens] }, levelAliens = [aliens];
-  const state = startLevel({ tables, map, level, tileset: levelTileset(exe, level), strict: !$('preview').checked, party: carried.party, globals: carried.globals, rngSeed: carried.rngSeed, demoMode });
+  const state = startLevel({ tables, map, level, tileset: levelTileset(exe, level), strict: !$('preview').checked, party: carried.party, globals: carried.from ? carriedGlobals(carried.from) : null, rngSeed: carried.rngSeed, demoMode, recording: !!record });
+  state.demoRecord = record; // cs:8716 = 1 and the index cs:8717 carry into the next level
   state.shareCredits = !!assets.options.share; // cs:1118
   game = { level, state, tileStore, dac, redDac, levelDac: dac, levelAliens, alienPalette: null, sheets, hud: assets.hud, descriptor: assets.descriptor, tables, framebuffer: createFramebuffer() };
   redrawPanels(state);
@@ -150,7 +151,6 @@ function pollJoysticks() {
   joystick[0] = c1 === 'joystick' ? word(pads[0]) : 0;
   joystick[1] = choice === 'keys' ? keyboard.inputFrom(P2_KEYS) : word(pads[c1 === 'joystick' ? 1 : 0]);
 }
-const partyOf = state => ({ count: state.playerCount, inGame: state.players.map(p => p.alive), saved: state.players.map(savePlayer) });
 const newParty = () => ({ count: assets.options.players + 1, inGame: [true, assets.options.players === 1], saved: [null, null] }); // 1000:1951
 // 1000:6030 copies a boss palette to bank 0xC0 and swaps the alien sheet; 205F restores both after the boss.
 function bossPalette(state) {
@@ -247,17 +247,16 @@ function* pauseCheck(state) {
 }
 
 function* gameSession(firstLevel, demo) {
-  let carried = { party: newParty(), globals: null, rngSeed: newGameSeed() };
+  let carried = { party: newParty(), globals: null, rngSeed: newGameSeed() }, demoFrame = 0, recording = null; // cs:8717 is reset only when a demo starts (0A42)
   for (let level = firstLevel; ;) {
     music.stop(); // 1000:1949 (2261): fn 7, which also sets the PIT back to 0x438C
     const previous = game?.state;
-    if (!demo && (level !== firstLevel || level === NEW_GAME_LEVEL)) { // 1000:198E, not in demo mode
+    if (!demo && !recording && (level !== firstLevel || level === NEW_GAME_LEVEL)) { // 1000:1986: no intermission while cs:8716 is set
       const picture = yield loadPicture(intermissionPicture(assets.exe, level));
       yield* idle(intermission(level, { exe: assets.exe, display, font: assets.font, text: assets.text, picture, deckman: assets.deckman, tables: assets.tables,
         descriptor: assets.descriptor, input: leadInput(carried.party.inGame), report: message => previous ? previous.report?.(message) : strictReport(message), exitTaken: previous?.exitTaken }), previous);
     }
-    yield loadLevel(level, carried, demo ? 2 : 0);
-    let demoFrame = 0;
+    yield loadLevel(level, carried, demo ? 2 : 0, recording);
     const state = game.state;
     stepFrame(state, [0, inputFor(1)], retrace.ticks); yield; stepFrame(state, [0, inputFor(1)], retrace.ticks); yield; // two warm-up passes of 37D6 (1000:1F8D)
     renderGame(); yield* idle(fadeIn(display, game.dac), state); // 1000:1FB9
@@ -288,20 +287,18 @@ function* gameSession(firstLevel, demo) {
       if (keyboard.lastScancode === 0x13 && assets.intexMemory.recordArmed) state.demoRecord = { buffer: assets.demo, index: 0 };
       yield;
     }
-    inGame = false;
+    inGame = false; recording = state.demoRecord ?? null;
     const next = nextStage(level, result, state.levelCode);
-    if (result === 'previous' && state.demoRecord) throw new UnsupportedPath('Level change while recording a demo (1000:1E9D skips the player restore)', {});
     if (result === 'previous') { // 1000:3526: back one level; the fade runs with the music still playing
       yield* idle(fadeOut(display), state);
-      carried = { party: partyOf(state), globals: carriedGlobals(state) };
+      carried = { party: partyOf(state), from: state }; // the globals are taken when the next level loads, after the intermission's INT 8 ticks
       if (next.level < 0) throw new UnsupportedPath('Level index below 0', {});
       level = next.level; continue;
     }
-    if (state.demoRecord && result !== 'gameover' && result !== 'aborted') throw new UnsupportedPath('Level change while recording a demo (1000:1E9D skips the player restore)', {});
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
     if (next.kind === 'level') {
-      carried = { party: partyOf(state), globals: carriedGlobals(state) };
+      carried = { party: partyOf(state), from: state }; // the globals are taken when the next level loads, after the intermission's INT 8 ticks
       level = next.level; continue;
     }
     const input = leadInput(state.players.map(p => p.alive));
