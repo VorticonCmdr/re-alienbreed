@@ -1,7 +1,7 @@
 # Port status
 
-Updated 2026-10-18 (all levels, sound effects, FM music). Evidence for each claim: [evidence.md](evidence.md); music driver:
-[avmfm.md](avmfm.md). Scenarios: [scenarios/](scenarios/).
+Updated 2026-10-18 (title, all levels, Intex, sound effects, FM music). Evidence for each claim: [evidence.md](evidence.md);
+music driver: [avmfm.md](avmfm.md); Intex: [intex.md](intex.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
 
@@ -11,12 +11,18 @@ browser; tables, texts, scripts and the music driver are read from the user's fi
 
 ## Working route
 
-`npm run dev`, open `/game.html`, press **Play** (Z fires and skips screens, arrows move, 1 cycles weapons, Esc abandons).
-A new game starts like the original's: intermission (CARGOBAY and the deck 1 briefing), then level index 1 (`L0MZ`).
+`npm run dev`, open `/game.html`, press **Play** (Z fires and skips screens, X is the action key, arrows move, 1 cycles
+weapons, M shows the map once bought, Esc abandons). Start-up shows the title with its song and menu (players, share
+credits, start game); idling runs the credits, the story pages and the attract demo. A new game starts like the
+original's: intermission (CARGOBAY and the deck 1 briefing), then level index 1 (`L0MZ`).
 Every exit leads through the intermission (deck lift with the deck-man, briefing, level code) to the next index, carrying
 the player's energy, lives, keys, ammo, weapons, credits and tallies, the random generator and the counters the
 original never resets. After index 18 the ending plays; every finished game ends on the game-over screen.
-`?level=N` (development) starts a new game at index N without the first intermission.
+`?level=N` (development) skips the title and starts a new game at index N without the first intermission.
+
+Intex terminals (action key on a terminal cell): boot text with the typewriter, main menu, weapon and tool shops,
+radar map, mission text, statistics, info pages, the cheat and level-code words, and the original's way back into the
+level. The M key opens the map screen for a player who bought the map.
 
 In a level: walking, collision, conveyors, one-way cells, hazards, pickups, doors (keys or shooting), all seven
 weapons including bouncing shots, destructible walls with burning debris, aliens and eggs, generators, the
@@ -36,25 +42,26 @@ PIT rates the driver programs, with the alarm song's start-without-stop quirk.
 | --- | --- |
 | `npm test` | Unit tests; tests needing the original files skip without them. |
 | `npm run verify` | Requires the original files. Every test with skipping forbidden, then the browser scenario in headless Chrome (intermission, new game at index 1, level index 2 movement, firing, sound, aliens, music at 120 Hz). |
-| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, with a negative control. |
+| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, and the level 5 boss fight (boss, player, RNG, records) at two points of a partial restore, each with a negative control. |
 
 Verified levels, from strongest to weakest:
 
-- **Independent runtime**: the music driver port against the original's memory (above).
+- **Independent runtime**: the music driver and the level 5 boss against the original's memory (above).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
   checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`).
 - **Routine checks**: map decoding, RNG trace, collision, pickups, BCD tallies, weapon cycling, bouncing shots,
   destructible walls, bosses on levels 5/8/17, scripted spawns, PIT model, sound priority, song loop restart.
-  Everything new in this milestone except the music driver is static analysis checked by these tests, not yet compared
-  with original runs.
+  The title, intermission, Intex, endings, scripted spawns, bosses of levels 8 and 17 and the level sequence are static
+  analysis checked by these tests and the browser scenario (title, intermission, a level, an Intex visit), not yet
+  compared with original runs.
 
 ## Known limitations
 
-- Not implemented (strict stop): the Intex terminal and shop (action key on a terminal), the map screen (needs the
-  Intex), two players, shots more than 3 pixels above the map. Not present: the title and menus (the port starts a
-  one-player game directly), the attract demo outside the tests.
-- Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace with the lag flag at 0. In-game the PIT runs
+- Not implemented (strict stop): two players, shots more than 3 pixels above the map, the demo-recording and
+  exit-to-DOS cheat words. Not present: the start-up screens before the title (logos and intro).
+- Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
+  it is set only after pauses (fades, the Intex). In-game the PIT runs
   at 120 Hz; interrupts arriving while the frame has them disabled are collapsed and do not tick the music. The share of
   the frame before that window is a machine property; the port uses 0.8, which makes in-game songs advance at the
   96 ticks/s their CMF headers declare. The self-destruct timer runs at the full 120 Hz under this model.
@@ -69,5 +76,5 @@ Verified levels, from strongest to weakest:
 
 ## Next milestone
 
-The Intex terminal (shop, statistics, map), then original-run comparisons for the new paths (a boss fight, a level
-transition with carried state, the intermission timing), the title and menu, and two players.
+Original-run comparisons for the remaining new paths (an Intex purchase, a level transition with carried state, the
+intermission timing, the bosses of levels 8 and 17), the start-up screens, and two players.

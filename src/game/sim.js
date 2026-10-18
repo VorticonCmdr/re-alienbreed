@@ -374,8 +374,12 @@ export function followCamera(state) {
 // frame, see mapRequested): `scancode` is [B086],
 // the last INT 9 scancode. Returns 'abort' (the abort key ends the game like losing), 'consumed' (the caller clears
 // [B086]) or null. The cheat keys need cs:[7FD9] = 0xFF, which nothing sets in normal play; they are not modelled.
-export function mainLoopKeys(state, scancode, abortScancode) {
+export function mainLoopKeys(state, scancode, abortScancode, cheats = false) {
   if ((scancode & 0xff) === abortScancode) return 'abort';
+  if (cheats) { // cs:[7FD9], set by a cheat word in the Intex: = takes the exit, - goes back one level (1000:3502-3532)
+    if (scancode === 0x0d && state.level < 0x12) state.exitTaken = true;
+    if (scancode === 0x0c && state.level >= 0) return 'previous';
+  }
   const cycle = [0x82, 0x8b].indexOf(scancode); // release of 1 (player 1) or 0 (player 2): next owned weapon
   if (cycle >= 0) {
     const player = state.players[cycle];

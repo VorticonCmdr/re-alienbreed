@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createFmDriver, createMusic } from '../src/game/fmdriver.js';
 
 const root = new URL('../', import.meta.url), game = new URL('game/', root);
-const required = ['.work/captures/avmfm-title-1000.json', '.work/captures/avmfm-ingame-3000.json'];
+const required = ['.work/captures/avmfm-title-1000.json', '.work/captures/avmfm-ingame-3000.json', '.work/captures/boss5-run2-hit5.json', '.work/captures/boss5-run2-hit115.json'];
 const missing = required.filter(p => !existsSync(new URL(p, root)));
 if (missing.length) { console.error(`Missing runtime captures: ${missing.join(', ')}`); process.exit(2); }
 let checks = 0;
@@ -48,5 +48,44 @@ for (const [name, song, file] of CAPTURES) {
   // Negative control: one tick more must differ somewhere.
   const later = portState((await driverAfter(song, file, capture.driverTicks + 1)).d);
   check(`${name}: one extra tick is detected`, () => assert.notDeepEqual(later, original));
+}
+
+// Boss on level index 5 (partial restore: the attract demo redirected to index 5, the player moved off the exit pad and
+// [7B3F] set before the first warm-up frame; starting counters read from the original). Frame-end hit 5 matches port
+// step 5; hit 115 matches step 120: the original's hit count fell 5 behind in between (breakpoint hits lost while
+// skipping, not explained further), so the step is pinned by the boss countdown and the player's shots.
+{
+  const { exeView } = await import('../src/game/exe.js');
+  const { decodeMap, levelMapNames } = await import('../src/game/level.js');
+  const { decompressLzhuf } = await import('../src/lzhuf.js');
+  const { readTables, startLevel, levelTileset, stepFrame } = await import('../src/game/sim.js');
+  const exe = exeView(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL(levelMapNames(exe)[5].toUpperCase(), game)))));
+  const demo = new Uint8Array(await readFile(new URL('DEMO.DAT', game)));
+  const load = async n => JSON.parse(await readFile(new URL(`.work/captures/boss5-run2-hit${n}.json`, root), 'utf8'));
+  const captures = [[await load(5), 5], [await load(115), 120]], st = captures[0][0].start;
+  const run = steps => {
+    const globals = { frameCounter: st.frameCounter, tickAccumulator: st.tickAccumulator, burning: st.burning, timer60: st.timer60, timer104: st.timer104,
+      spawnCounter: st.spawnCounter, secondCycle: st.secondCycle, spreadCounter: st.spreadCounter, bounceCounter: st.bounceCounter, scriptedSpawnTimer: -1,
+      scriptedSpawn: null, aliensSuppressed: false, frameTicks: 0, lag: 0, rng: { s: ((-st.rngSeed & 0xffff) << 16 | st.rngSeed) >>> 0, c: 1 } };
+    const state = startLevel({ tables: readTables(exe), map, level: 5, tileset: levelTileset(exe, 5), demoMode: 2, globals });
+    const p = state.players[0]; p.x = st.player.x; p.y = st.player.y; state.objectiveTriggered = true;
+    let before = null;
+    for (let k = 1; k <= steps; k++) { before = { x: p.x, y: p.y, ammo: p.ammo, frame: p.frame }; stepFrame(state, demo[k - 1], 0); }
+    const b = state.objects.find(o => o.active && o.type === 0x0c);
+    return { boss: { x: b.x, y: b.y, frame: b.frame, energy: b.energy, facing: b.facing, mode: b.mode, countdown: b.countdown }, player: before,
+      rng: state.atFlip.rng, types: state.objects.slice(0, 6).map(o => o.active ? o.type : 0) };
+  };
+  for (const [capture, step] of captures) {
+    const b = Buffer.from(capture.records, 'base64'), rec = r => { const o = r * 0x6c, w = k => b.readUInt16LE(o + k), s = k => b.readInt16LE(o + k);
+      return { x: s(0), y: s(2), frame: w(6), type: w(0xe), energy: s(0x2e), facing: w(0x1e), mode: b[o + 0x3f], countdown: s(0x4d), ammo: w(0x42) }; };
+    const records = Array.from({ length: 6 }, (_, r) => rec(r)), boss = records.find(r => r.type === 0x0c), port = run(step);
+    check(`boss level 5 hit ${capture.hit}: boss`, () => assert.deepEqual(port.boss, { x: boss.x, y: boss.y, frame: boss.frame, energy: boss.energy, facing: boss.facing, mode: boss.mode, countdown: boss.countdown }));
+    check(`boss level 5 hit ${capture.hit}: player`, () => assert.deepEqual(port.player, { x: records[0].x, y: records[0].y, ammo: records[0].ammo, frame: records[0].frame }));
+    check(`boss level 5 hit ${capture.hit}: RNG`, () => assert.deepEqual(port.rng, { s: ((capture.rng[1] << 16) | capture.rng[0]) >>> 0, c: capture.rng[2] & 1 }));
+    check(`boss level 5 hit ${capture.hit}: record types`, () => assert.deepEqual(port.types, records.map(r => r.type)));
+  }
+  const wrong = run(119); // negative control: one step early
+  check('boss level 5: one step off is detected', () => assert.notDeepEqual(wrong.boss.countdown, run(120).boss.countdown));
 }
 console.log(`runtime checks: ${checks} passed`);

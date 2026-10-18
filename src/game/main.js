@@ -188,9 +188,10 @@ function* gameSession(firstLevel, demo) {
     let result = null;
     for (;;) { // 1000:34E6
       state.sounds = [];
-      const key = mainLoopKeys(state, keyboard.lastScancode, assets.abortScancode);
+      const key = mainLoopKeys(state, keyboard.lastScancode, assets.abortScancode, assets.intexMemory.cheats);
       if (key === 'consumed') keyboard.consumeScancode();
       for (const id of state.sounds) effects.play(id);
+      if (key === 'previous') { result = 'previous'; break; }
       if (key === 'abort' || state.levelOver) { result = key === 'abort' ? 'aborted' : state.levelOver; break; }
       if (demo) { const end = demoFrame === 0x3ff; stepFrame(state, assets.demo[demoFrame++], retrace.ticks, { demoEnd: end }); }
       else stepFrame(state, keyboard.inputByte(), retrace.ticks);
@@ -206,8 +207,14 @@ function* gameSession(firstLevel, demo) {
       yield;
     }
     inGame = false;
+    if (result === 'previous') { // 1000:3526: back one level; the fade runs with the music still playing
+      yield* idle(fadeOut(display), state);
+      carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
+      level = (level - 1) & 0xffff; if (level > 18) throw new UnsupportedPath('Level index below 0', {}); continue;
+    }
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
+    if (state.levelCode !== undefined) level = state.levelCode; // a level code typed in the Intex set [B0B2]
     if (result === 'complete' && level !== 0 && level !== 18) {
       carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
       level++; continue;

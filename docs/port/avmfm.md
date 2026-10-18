@@ -151,7 +151,7 @@ The 0x308C value in [evidence.md](evidence.md) was therefore title or intex musi
 ```
 IRQ0 (PIT ch0) ──► game 1000:7872 (the real INT 8 handler)
                     ├─ counters: [AF86]++, [8184]++, [B078]++ (32-bit), [AD4C]+=0x334 …
-                    ├─ if byte [7B4A] != 0 → own-chain path (always 0 in practice: only ever written 0)
+                    ├─ if byte [7B4A] != 0 → own-chain path (set to 0xFF by the file loaders D01F/D076 while a file is read; see intex.md 9.1)
                     ├─ if cs:[3AEB] == 0:  call 796A
                     │      796A: INT 60h ──► driver tick handler f:110E (§2.2); the driver EOIs or chains the BIOS
                     │            then: if [E33A]==0 and cs:[0F0C]==0xFF → INT80 fn7, fn6 (restart the song)
