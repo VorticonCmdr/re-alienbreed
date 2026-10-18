@@ -19,5 +19,8 @@
   "devDependencies": {
     "playwright": "^1.58.2",
     "vite": "^8.3.2"
+  },
+  "dependencies": {
+    "peerjs": "1.5.5"
   }
 }

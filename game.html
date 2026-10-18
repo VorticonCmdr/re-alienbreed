@@ -16,6 +16,10 @@
       <label class="mode"><input id="passcode" type="checkbox"> Ask for the code from the manual at start-up, as the unpatched game does (the answer is logged to the browser console)</label>
       <label class="mode">Player 2 controls <select id="p2-controls"><option value="setup">as SETUP.DAT (the shipped file gives none)</option><option value="keys">joystick 2 from W A S D, fire F, action G</option><option value="gamepad">joystick 2 from a gamepad</option></select></label>
       <label class="mode"><input id="preview" type="checkbox"> Preview mode: skip behaviour that is not reproduced yet instead of stopping (listed on screen; not faithful)</label>
+      <fieldset class="net"><legend>Network play (two players, a port addition)</legend>
+        <button id="net-host" type="button">Host</button> <input id="net-code" placeholder="host code" size="14" aria-label="Host code"> <button id="net-join" type="button">Join</button>
+        <p id="net-status" role="status">Both players need their own game files. Only the inputs are sent; the connection is brokered by PeerJS.</p>
+      </fieldset>
       <button id="play" type="button" hidden>Play</button>
       <button id="choose-folder" type="button">Open game folder</button>
       <input id="folder-input" type="file" webkitdirectory multiple hidden>

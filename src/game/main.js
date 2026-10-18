@@ -15,6 +15,7 @@ import { titleLoop, titleFiles } from './title.js';
 import { intro, introFiles } from './intro.js';
 import { passcode } from './passcode.js';
 import { seedFromClock, nextRandom } from './rng.js';
+import { createLockstep, stateHash, broadcastTransport, peerTransport, HASH_EVERY } from './netplay.js';
 import { intexSession, mapSession, intexFiles, createIntexMemory } from './intex.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
@@ -132,6 +133,7 @@ function redrawPanels(state) {
 let joystick = [0, 0], joyTicks = 0;
 const P2_KEYS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', fire: 'KeyF', action: 'KeyG' };
 function controllers() {
+  if (net) return ['keys', 'joystick']; // network play: the host's keyboard, the guest on joystick 2
   const s = assets.setup, choice = $('p2-controls').value;
   return [s[2] & 1 ? 'joystick' : s[0] ? 'keys' : 'none', choice !== 'setup' ? 'joystick' : s[2] & 2 ? 'joystick' : s[0] === 2 ? 'keys' : 'none'];
 }
@@ -147,6 +149,7 @@ function pollJoysticks() {
     if (!pad) return 0; const b = i => pad.buttons[i]?.pressed, [ax, ay] = pad.axes;
     return (b(15) || ax > 0.5 ? 1 : 0) | (b(14) || ax < -0.5 ? 2 : 0) | (b(13) || ay > 0.5 ? 4 : 0) | (b(12) || ay < -0.5 ? 8 : 0) | (b(0) ? 0x10 : 0) | (b(1) ? 0x20 : 0);
   };
+  if (net) { joystick[0] = 0; joystick[1] = guestJoy; return; } // the guest's word, as it arrived for this retrace
   const [c1] = controllers(), choice = $('p2-controls').value;
   joystick[0] = c1 === 'joystick' ? word(pads[0]) : 0;
   joystick[1] = choice === 'keys' ? keyboard.inputFrom(P2_KEYS) : word(pads[c1 === 'joystick' ? 1 : 0]);
@@ -183,7 +186,7 @@ function* idle(generator, state) { for (const _ of generator) { if (state) intTi
 function* program(devLevel) {
   const bootRng = seedFromClock(new Date()); // 1000:027D: the RNG is seeded from the clock at start-up
   if (devLevel !== null) return yield* gameSession(devLevel, false);
-  if ($('passcode').checked) { // ALIEN.EX_ 1000:03C1-0493; the supplied ALIEN.EXE jumps over the comparison
+  if ($('passcode').checked && !net) { // ALIEN.EX_ 1000:03C1-0493; the supplied ALIEN.EXE jumps over the comparison
     phase = 'passcode'; typedChars = []; canvas.hidden = true;
     const ok = yield* passcode({ exe: assets.exe, show: text => { $('dos').textContent = text; $('dos').hidden = false; },
       pick: () => nextRandom(bootRng), // 03D5: one RNG step per prompt; the entry is the low six bits of [B038]
@@ -353,10 +356,19 @@ function tick(now) {
   accumulator = Math.min(accumulator + now - last, FRAME_MS * 8); last = now;
   try {
     while (accumulator >= FRAME_MS && !waiting) {
-      retrace = advanceRetrace(timer, inGame ? GAME_OPEN_SHARE : 1);
+      if (net) { // lockstep: this retrace runs once both sides' input for it is here
+        if (!net.ready(retraceIndex)) { accumulator = Math.min(accumulator, FRAME_MS); break; }
+        net.queue(retraceIndex, localKeys.splice(0), net.role === 'guest' ? guestKeys.inputByte() : 0);
+        const { host, guest } = net.take(retraceIndex);
+        for (const [code, down] of [...host.keys, ...guest.keys]) down ? keyboard.down({ code }) : keyboard.up({ code });
+        guestJoy = guest.joy;
+      }
+      retrace = advanceRetrace(timer, inGame ? GAME_OPEN_SHARE : 1); totalTicks += retrace.ticks;
       if (assets) for (joyTicks += retrace.ticks; joyTicks >= 4; joyTicks -= 4) pollJoysticks(); // [B425] (cs:3AEB / 7871 gating not modelled)
       const step = session.next(resumeWith); resumeWith = undefined;
       if (opl) renderMusic();
+      if (net && retraceIndex % HASH_EVERY === 0) net.hash(retraceIndex, stateHash(game?.state, [totalTicks, retraceIndex]));
+      retraceIndex++;
       accumulator -= FRAME_MS;
       if (step.done) { present(); finish(step.value); return; }
       if (step.value instanceof Promise) {
@@ -388,15 +400,54 @@ function start() {
   canvas.focus(); requestAnimationFrame(tick);
 }
 
-// 1000:17FC seeds the generator from [B07A], the high word of the INT 8 tick count since the game started.
-const newGameSeed = () => Math.floor(performance.now() / 1000 * 69 / 65536) & 0xffff;
+// 1000:17FC seeds the generator from [B07A], the high word of the INT 8 tick count since the program started.
+const newGameSeed = () => (totalTicks >>> 16) & 0xffff;
 
 let source = null;
 // Development aid: ?level=N skips the title and starts a new game at level index N (0-18).
 function startLevelChoice() { const query = new URLSearchParams(location.search), n = Number(query.get('level')); return query.has('level') && Number.isInteger(n) && n >= 0 && n <= 18 ? n : null; }
-async function begin(label) {
-  try { status(`Loading from ${label}…`); await loadCommon(source); game = null; session = program(startLevelChoice()); start(); }
-  catch (error) { status(error.message); }
+async function begin(label, devLevel = startLevelChoice()) {
+  try {
+    status(`Loading from ${label}…`); await loadCommon(source); game = null;
+    retraceIndex = 0; totalTicks = 0; guestJoy = 0; localKeys = []; guestKeys = net ? createKeyboard(keyboard.bindings) : null;
+    session = program(devLevel); start();
+  } catch (error) { status(error.message); }
+}
+
+// Network play (netplay.js): Host waits for a guest (PeerJS id, or ?net=local&role=host for two tabs); Play then starts
+// both. The settings that change the game are the host's.
+let net = null, transport = null, retraceIndex = 0, totalTicks = 0, guestJoy = 0, localKeys = [], guestKeys = null;
+const netStatus = text => { $('net-status').textContent = text; };
+function connect(role, t) {
+  transport = t;
+  net = createLockstep(role, t, {
+    start: settings => { $('preview').checked = settings.preview; netStatus('The host started the game.'); begin('game files', settings.devLevel); },
+    closed: reason => { netStatus(reason); if (running) { running = false; showDiagnostic(new Error(`Network play ended: ${reason}`)); } net = null; },
+    desync: n => { running = false; showDiagnostic(new Error(`Network play went out of step at retrace ${n}: the two games differ (different game files or a port bug).`)); },
+  });
+  let answered = false; // both sides greet on connecting and answer the other's first greeting once
+  t.onMessage(message => {
+    if (message.t !== 'hello') return;
+    netStatus(role === 'host' ? 'Player 2 is connected. Press Play to start.' : 'Connected. Waiting for the host to press Play.');
+    if (!answered) { answered = true; t.send({ t: 'hello' }); }
+  });
+  t.send({ t: 'hello' });
+}
+async function host() {
+  netStatus('Opening a connection…');
+  try { connect('host', await peerTransport('host', null, { onId: id => netStatus(`Your code: ${id}. Waiting for player 2…`) })); }
+  catch (error) { netStatus(`Network play failed: ${error.message ?? error}`); }
+}
+async function join() {
+  const code = $('net-code').value.trim(); if (!code) return netStatus('Enter the host\'s code.');
+  netStatus('Connecting…');
+  try { connect('guest', await peerTransport('guest', code)); } catch (error) { netStatus(`Network play failed: ${error.message ?? error}`); }
+}
+$('net-host').addEventListener('click', host);
+$('net-join').addEventListener('click', join);
+{ // two tabs of one browser: ?net=local&room=name&role=host|guest
+  const query = new URLSearchParams(location.search);
+  if (query.get('net') === 'local') connect(query.get('role') === 'guest' ? 'guest' : 'host', broadcastTransport(query.get('room') ?? 'local', query.get('role') ?? 'host'));
 }
 
 addEventListener('keydown', event => {
@@ -405,13 +456,21 @@ addEventListener('keydown', event => {
     if (c !== undefined) { event.preventDefault(); typedChars.push(c); } return;
   }
   if (!keyboard) return;
-  if (keyboard.handles(event)) { event.preventDefault(); keyboard.down(event); }
+  if (keyboard.handles(event)) { event.preventDefault(); if (net && running) netKey(event, true); else keyboard.down(event); }
 });
-addEventListener('keyup', event => { if (keyboard?.handles(event)) { event.preventDefault(); keyboard.up(event); } });
-addEventListener('blur', () => keyboard?.clear());
+addEventListener('keyup', event => { if (keyboard?.handles(event)) { event.preventDefault(); if (net && running) netKey(event, false); else keyboard.up(event); } });
+// In network play keys are sent ahead instead of changing the keyboard now. The guest's own movement, fire and action keys
+// (its SETUP.DAT bindings) make up joystick 2's word; its other keys go to the shared keyboard like the host's.
+function netKey(event, down) {
+  if (net.role === 'guest' && Object.entries(guestKeys.bindings).some(([name, code]) => ['up', 'down', 'left', 'right', 'fire', 'action'].includes(name) && code === event.code)) {
+    down ? guestKeys.down(event) : guestKeys.up(event); return;
+  }
+  localKeys.push([event.code, down]);
+}
+addEventListener('blur', () => { if (net && running) guestKeys?.clear(); else keyboard?.clear(); }); // the shared keyboard changes only through sent keys
 $('choose-folder').addEventListener('click', () => $('folder-input').click());
-$('folder-input').addEventListener('change', event => { source = assetSource(entriesFromFileList(event.target.files)); begin('the selected folder'); });
-$('play').addEventListener('click', () => begin('game/'));
+$('folder-input').addEventListener('change', event => { source = assetSource(entriesFromFileList(event.target.files)); if (net?.role === 'guest') netStatus('Game folder selected. Waiting for the host to press Play.'); else begin('the selected folder'); });
+$('play').addEventListener('click', () => { if (net?.role === 'guest') return netStatus('The host starts the game.'); if (net) net.start({ preview: $('preview').checked, devLevel: startLevelChoice() }); begin('game/'); });
 
 if (import.meta.env.DEV) {
   try {
@@ -421,4 +480,4 @@ if (import.meta.env.DEV) {
   } catch { status('Open your original game folder to start.'); }
 } else status('Open your original game folder to start. Files are read in your browser and not uploaded.');
 
-window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; }, get music() { return { song: music?.song, scheduled: musicClock } }, get timer() { return { ...timer }; }, get phase() { return phase; }, get recordArmed() { return !!assets?.intexMemory?.recordArmed; } };
+window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; }, get music() { return { song: music?.song, scheduled: musicClock } }, get timer() { return { ...timer }; }, get phase() { return phase; }, get recordArmed() { return !!assets?.intexMemory?.recordArmed; }, get net() { return net && { role: net.role, retrace: retraceIndex }; } };

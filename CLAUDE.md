@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A vanilla JavaScript (no framework, no TypeScript) port of the IBM PC edition of Alien Breed (Team17 / A.V.M., 1993) to the browser: an asset viewer (`viewer.html`) and the playable game (`game.html`, `src/game/`). Vite is the only runtime dependency; Playwright drives the browser check. Node 22.12+ or 24+. Current state and limits: `docs/port/STATUS.md`; evidence: `docs/port/evidence.md`.
+A vanilla JavaScript (no framework, no TypeScript) port of the IBM PC edition of Alien Breed (Team17 / A.V.M., 1993) to the browser: an asset viewer (`viewer.html`) and the playable game (`game.html`, `src/game/`). Vite and Playwright are development dependencies; PeerJS (network play, imported on demand) is the only runtime dependency. Node 22.12+ or 24+. Current state and limits: `docs/port/STATUS.md`; evidence: `docs/port/evidence.md`.
 
 ## Commands
 

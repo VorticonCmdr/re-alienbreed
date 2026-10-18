@@ -158,6 +158,37 @@ try {
   const moved2 = await page.evaluate(() => { const [p1, p2] = window.__alienBreed.state.players; return { p1: [p1.x, p1.y], p2x: p2.x, panel: Array.from(window.__alienBreed.framebuffer.subarray(178 * 320 + 160 + 32, 178 * 320 + 160 + 96)) }; });
   check('D moves player 2 (joystick 2), player 1 stays', () => { assert.ok(moved2.p2x > two.p2x, `${two.p2x} -> ${moved2.p2x}`); assert.deepEqual(moved2.p1, two.p1); });
   check("player 2's energy bar is drawn in the right half of the panel", () => assert.ok(moved2.panel.every(v => v >= 0xf0)));
+  // Network play over two tabs (BroadcastChannel transport, the same lockstep as PeerJS): the host starts both, picks TWO,
+  // the guest's arrows move player 2 in both tabs, both stay in step; a change made in one tab is caught by the hash check.
+  {
+    const net = await browser.newContext(), hostPage = await net.newPage(), guestPage = await net.newPage(), netUrl = url + '?net=local&room=scenario&role=';
+    for (const p of [hostPage, guestPage]) p.on('pageerror', e => errors.push(e.message));
+    await guestPage.goto(netUrl + 'guest'); await hostPage.goto(netUrl + 'host');
+    await hostPage.locator('#play').waitFor({ state: 'visible', timeout: 15000 }); await guestPage.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
+    await hostPage.waitForFunction(() => document.getElementById('net-status').textContent.includes('connected'), null, { timeout: 5000 });
+    await hostPage.click('#play');
+    await guestPage.waitForFunction(() => window.__alienBreed.phase === 'title', null, { timeout: 30000 });
+    await hostPage.waitForFunction(() => window.__alienBreed.phase === 'title', null, { timeout: 30000 }); await hostPage.waitForTimeout(1500);
+    const press = async (p, k, h = 100) => { await p.keyboard.down(k); await p.waitForTimeout(h); await p.keyboard.up(k); await p.waitForTimeout(200); };
+    for (const k of ['ArrowUp', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowDown']) await press(hostPage, k);
+    await press(hostPage, 'KeyZ');
+    for (let i = 0; i < 40 && !(await hostPage.evaluate(() => window.__alienBreed.state?.frame > 10)); i++) await press(hostPage, 'KeyZ', 80);
+    await hostPage.waitForTimeout(800);
+    const view = p => p.evaluate(() => { const s = window.__alienBreed.state; return { count: s.playerCount, p1: [s.players[0].x, s.players[0].y], p2: [s.players[1].x, s.players[1].y], frame: s.frame }; });
+    const start = await view(hostPage);
+    await guestPage.keyboard.down('ArrowRight'); await guestPage.waitForTimeout(500); await guestPage.keyboard.up('ArrowRight'); await guestPage.waitForTimeout(600);
+    await press(hostPage, 'KeyP'); await hostPage.waitForTimeout(800); // the host's pause stops both tabs at the same frame
+    const [h, g] = [await view(hostPage), await view(guestPage)];
+    await press(hostPage, 'KeyP'); await hostPage.waitForTimeout(300);
+    check('network play: the host starts both tabs, TWO gives both players', () => assert.equal(start.count, 2));
+    check("network play: the guest's arrows move player 2 in both tabs", () => assert.ok(h.p2[0] > start.p2[0] && g.p2[0] > start.p2[0], `${start.p2} -> ${h.p2} / ${g.p2}`));
+    check('network play: paused by the host, both tabs are in the same state at the same frame', () => assert.deepEqual(h, g));
+    await guestPage.evaluate(() => { window.__alienBreed.state.players[0].x += 1; }); // a deliberate difference in one tab
+    await hostPage.waitForFunction(() => !document.getElementById('diagnostic').hidden, null, { timeout: 8000 }).catch(() => {});
+    const caught = await hostPage.textContent('#diagnostic');
+    check('network play: a difference between the two games is caught by the state hash', () => assert.match(caught, /out of step/));
+    await net.close();
+  }
   // The optional code check of the unpatched program: the prompt in text mode, the answer from the console log.
   const logs = []; page.on('console', m => logs.push(m.text()));
   await page.goto(url); await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });

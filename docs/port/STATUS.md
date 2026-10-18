@@ -25,6 +25,12 @@ Two players: TWO on the title. Player 2 takes its controller from SETUP.DAT like
 none, so it reads the first map word (it stands still or walks right, depending on the level). The page option "Player 2
 controls" gives it joystick 2 instead, fed from W A S D (fire F, action G) or a gamepad.
 
+Network play (a port addition): one browser hosts, the other joins with the host's code (PeerJS); both need their own
+game files. Both run the whole program in lockstep, one retrace at a time, from the same inputs, sent three retraces
+ahead: the host's keyboard is the game's keyboard (player 1, menus, cheat words, pause), the guest is player 2 on
+joystick 2 and its other keys reach the same keyboard. A state hash every 120 retraces stops both if they ever differ.
+`?net=local&role=host|guest` connects two tabs of one browser without PeerJS.
+
 Intex terminals (action key on a terminal cell): boot text with the typewriter, main menu, weapon and tool shops,
 radar map, mission text, statistics, info pages, the cheat and level-code words (including demo recording: R in the
 level then records 0x400 frames into the attract demo and offers them as `DEMO.DAT`; and the exit word, which ends the

@@ -49,6 +49,7 @@ in-level items; screens need breakpoints on their retrace waits instead.
 | Demo with TWO selected | The cleared player-2 record is not updated on the first pass; its death check then takes it out | The original runs the update, whose probes around (0, 0) read memory outside the map; observed to change nothing |
 | Shot kill with nobody in the game | Credited to player 1 | The original credits whatever record BX holds; not established |
 | `[8184]` across the intermission | Keeps counting through the intermission | The original's intermission frame ends reset it; both values exceed the lag threshold of 5 at the next level start |
+| Network play | A port addition: lockstep over PeerJS (public broker by default, no TURN relay configured, so some strict networks will not connect); a slow connection makes the game stutter rather than drift; a window losing focus does not release the host's held keys | The original has no network play; the inputs follow its keyboard and joystick model |
 | Panel reloads after a boss starts or dies (`209E`, `A316`, `A31A`) | Not reproduced | The panel is redrawn every frame anyway |
 | Start-up code check | Off by default (as in `ALIEN.EXE`); the page option runs the unpatched check, with the entry from the RNG seeded by the browser's local time like the original's clock, shown as plain text | The original prints in 80×25 text mode; the 100-retrace pause before the prompt starts from page start, not from the program's clock read |
 
