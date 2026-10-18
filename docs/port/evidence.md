@@ -51,8 +51,8 @@ Tool caveats found so far:
 
 | Claim | Level | Where |
 | --- | --- | --- |
-| `ALIEN.EXE` never reprograms PIT channel 0; its only port-0x43 write is a PC-speaker tone (`1CE3:029E`) | static (byte search for `E6 43`, `BA 43 00`, `B0 36`) | — |
-| `AVMFM.BIN` sets PIT channel 0 to mode 3 with reload `0x308C` (12,428), i.e. **96.0 Hz** | observed (PIT read-back status `0x36`; reload stored at *live* `2F11:013E`; setter at driver file offset `0x960`) | AVMFM.BIN |
+| `ALIEN.EXE` reprograms PIT channel 0 itself only at start-up and exit: `1CE3:029E` writes control word 0xB4 but sends the count to port 40h (reload 0x438C, 69 Hz, from `1000:06B0`; 0xFFFF at `7B09`). Earlier this was misread as a PC-speaker tone. During play the music driver sets the rate (below) | static | `1CE3:029E` |
+| The music driver programs the PIT on song start and stop: 0x308C (96 Hz) for title and Intex music, 0x26D7 (120 Hz) for in-game, monster and alarmed music, 0x438C (69 Hz) after a stop. Observed: 0x308C stored at *live* `2F11:013E` during the title, 0x26D7 (9943) during the attract demo (2026-10-18). Full analysis: [avmfm.md](avmfm.md) | observed + static | AVMFM.BIN |
 | The game's INT 8 handler is `1000:7872`. It increments the frame-tick counter `[8184]` and `[AF86]`, a 32-bit counter `[B078]`, and a 1/80 accumulator `[AD4C] += 0x334` that drives a countdown `cs:[7969]` | static + observed (IVT) | `1000:7872` |
 | INT 9 (keyboard) handler is `1000:79D4` | observed (IVT) | — |
 | In-game frame end (`2EF5:1282`): set the CRTC start, wait for retrace start, set pel panning, then wait until `[8184] != 0`, reset it, and set the lag flag `[818A] = (ticks >= 5)` (forced to 0 when `byte [1000:8716] != 0`) | static | `2EF5:1282`–`12E8` |
@@ -142,3 +142,11 @@ browser port starts after this screen. The code table is not read or reproduced.
 | `1000:21A6` saves energy `+2E`, lives `+5B`, keys `+2C`, ammo `+42`, weapon `+5A`, owned weapons `+3E`, credits `+5E/+60`, map flag `+62` and the words `+63..+69`; `1000:1E15`–`1E6C` restores them at the next level start. A new game sets energy 0x40, lives 4, keys 0, ammo 0x17F, weapon 1, owned 0x7F (player 1; player 2 owns 1) and zeroes the saved words, so `+69` (the movement mask) starts at 0 | static | `1000:188B`–`1932`, `21A6`, `1E15` |
 | `+63..+6A` hold overlapping packed-BCD tallies: shots fired `+63` (`59DC`), kills `+65` (`4B5A`), doors opened `+67` (`4806`), each `ADD AX,1/DAA` then `ADC AX,0/DAA` on the next word. DAA adjusts AL only, so each word counts 00–99 in its low byte and carries into the next word's low byte | static | as listed |
 | Between levels (not in demo mode) `1000:44EC` shows an intermission: `CARGOBAY` before index 1, otherwise `DECKLIFT` with the deck-man animation (scripts, up to 150 frames or fire), a text page from the table at `cs:5BDE + 2·index` (400 frames or fire) and, for index > 1, a 9-character code from `cs:82A6 + 10·(index−2)` (3000 frames or fire) | static | `1000:44EC`–`476E` |
+
+## Music driver against the original
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| The port of the driver (`src/game/fmdriver.js`) reproduces the original's complete sequencer state (read position, delay counter, batch age, rhythm flags, voice owners, note codes, keys, KSL bits, volumes, F-numbers, age stamps, programs, pitch offsets) after 1000 driver ticks of TITLE.CMF and 3000 ticks of INGAME.CMF from fn 6, captured in DOSBox at the driver tick entry *live* `2F11:120E` (`npm run verify:runtime`, captures in `.work/captures`). Negative control: one tick more differs | independent runtime | `scripts/runtime-checks.mjs` |
+| In the attract demo at slow DOSBox cycles (about 21 frames per second), 2,030 INT 8 runs against 1,768 driver ticks and 358 frames: the music skips the IRQs that arrive while the frame has interrupts off | observed (breakpoint hit counts at `01F5:7872`, `2F11:120E`, `20EA:12BC`) | — |
+| Nothing in ALIEN.EXE writes OPL registers, and the driver never writes register 1, so waveform select stays off and every operator plays a sine | static (no `0x388` users besides the driver set-up at `1000:023B`) | — |

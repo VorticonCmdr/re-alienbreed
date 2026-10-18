@@ -282,7 +282,8 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
     rng: rng ? { ...rng } : seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
     generatorFlags: [false, false, false, false], generatorsDestroyed: 0, selfDestruct: false, seconds: 0, redAlert: false,
-    endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 10, levelTenTimer: 0x0f, music: 'ingame',
+    endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 0, levelTenTimer: 0x0f, // boot values from the image (cs:7969 is 0)
+    music: 'ingame',
   };
   state.report = message => unsupported(state, message);
   if (globals) Object.assign(state, globals, { rng: { ...globals.rng } }); // before 3D10, which may reset the timers

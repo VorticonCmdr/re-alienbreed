@@ -38,3 +38,29 @@ test('original executable: 25 samples in load order, all decodable, priorities f
   const priorities = samplePriorities(exe, names.length);
   assert.equal(priorities.length, 25); assert.ok(priorities.every(p => p >= -1 && p <= 24));
 });
+
+test('PIT model: 120 Hz IRQs per 70.086 Hz retrace; the in-game window only drops music ticks unless it spans two IRQs', async () => {
+  const { createTimer, advanceRetrace, RELOAD } = await import('../src/game/timing.js');
+  const run = share => { const t = createTimer(RELOAD.game); let ticks = 0, music = 0; for (let i = 0; i < 70086; i++) { const r = advanceRetrace(t, share); ticks += r.ticks; music += r.music.length; } return { ticks, music }; };
+  const all = run(1), game = run(0.8), fast = run(0.1);
+  assert.ok(Math.abs(all.ticks - 120000) <= 2 && all.music === all.ticks);
+  assert.equal(game.ticks, all.ticks, 'a 2.9 ms window never holds two IRQs');
+  assert.ok(Math.abs(game.music / all.ticks - 0.8) < 0.01, 'music advances on 80% of the IRQs');
+  assert.ok(fast.ticks < all.ticks * 0.75, 'a machine that waits most of the frame with interrupts off loses IRQs');
+  const slow = createTimer(RELOAD.stopped); let n = 0; for (let i = 0; i < 70086; i++) n += advanceRetrace(slow).ticks;
+  assert.ok(Math.abs(n - 69000) <= 2, `0x438C gives 69 Hz (${n})`);
+});
+
+test('original driver: the in-game song restarts at its 0x66 marker through the game loop check (1000:796A)', { skip: !existsSync(game) }, async () => {
+  const { createFmDriver, createMusic } = await import('../src/game/fmdriver.js');
+  const reloads = [], writes = [];
+  const driver = createFmDriver(new Uint8Array(await readFile(new URL('AVMFM.BIN', game))), (r, v) => writes.push([r, v]), r => reloads.push(r));
+  const music = createMusic(driver);
+  music.start('ingame', new Uint8Array(await readFile(new URL('ADLIB/INGAME.CMF', game))));
+  assert.deepEqual(reloads, [0x26d7, 0x26d7], 'fn 4 and fn 6 program the PIT (fn 7 does nothing while stopped)');
+  for (let i = 0; i < 12288; i++) music.irq();
+  assert.equal(driver.status, 0xff); const before = driver.debug.cur;
+  music.irq(); // tick 12289 runs the marker batch: status 0, so the game stops and replays at once
+  assert.ok(driver.debug.cur < before, 'read position back near the start'); assert.equal(driver.status, 0xff); assert.equal(driver.state, 1);
+  assert.ok(writes.some(([r, v]) => r === 0x83 && v === 0x13), 'the stop writes 0x13 to register 0x83');
+});

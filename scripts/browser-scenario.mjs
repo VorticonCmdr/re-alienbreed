@@ -80,6 +80,8 @@ try {
   check('walking right spawns the first alien', () => assert.ok(alien.alive >= 1));
   check('the alien is drawn from the alien sheet and palette bank', () => assert.ok(alien.alienPixels > 20, `alien-bank pixels ${alien.alienPixels}`));
   check('no strict stop so far', () => assert.equal(alien.diagnostic, ''));
+  const musicState = await page.evaluate(() => ({ ...window.__alienBreed.music, reload: window.__alienBreed.timer.reload }));
+  check('in-game music plays through the FM driver at the 120 Hz PIT rate', () => { assert.equal(musicState.song, 'ingame'); assert.ok(musicState.scheduled > 0); assert.equal(musicState.reload, 0x26d7); });
   check('no uncaught page errors', () => assert.deepEqual(errors, []));
 } finally {
   await browser.close(); await server.close();

@@ -9,7 +9,9 @@ import { frameDescriptor, drawSprite } from './sprites.js';
 import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
 import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './screens.js';
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
-import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE } from './timing.js';
+import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
+import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
+import { createOpl, OPL_RATE } from './opl2.js';
 import { bindingsFromSetup, createKeyboard } from './input.js';
 import { decompressLzhuf } from '../lzhuf.js';
 import { decodeVga, decodePlanar, decodeVoc } from '../formats.js';
@@ -51,7 +53,13 @@ async function loadCommon(source) {
     hud: createHud(decodeVga(decompressLzhuf(await source.read('PANEL.VHF'))).pixels),
     font: cutFont(decompressLzhuf(await source.read(exe.string(0x2041, 0x9a8c + 8))).subarray(0, 64000)), text: createTextState(),
     deckman: await sprites(deckmanSheetName(exe)),
+    songs: Object.fromEntries(await Promise.all(Object.keys(SONGS).map(async song => [song, await source.read(songFile(exe, song))]))),
   };
+  // The FM driver programs the PIT itself (fn 4, fn 6, fn 7), which sets the INT 8 rate.
+  opl = createOpl();
+  music = createMusic(createFmDriver(await source.read('AVMFM.BIN'), opl.write, reload => setReload(timer, reload)));
+  musicOut?.disconnect(); musicOut = audio.createGain(); musicOut.gain.value = 0.6; musicOut.connect(audio.destination);
+  musicClock = 0;
 }
 
 // 1000:1937-1FC1 for one level: tiles, map, palette, alien sheet, then the level start and its two warm-up frames.
@@ -100,7 +108,7 @@ function* idle(generator, state) { for (const _ of generator) { if (state) intTi
 function* gameSession(firstLevel) {
   let carried = { player: null, globals: null, rngSeed: newGameSeed() };
   for (let level = firstLevel; ;) {
-    setReload(timer, RELOAD.stopped); // 1000:1949 stops the music (2261)
+    music.stop(); // 1000:1949 (2261): fn 7, which also sets the PIT back to 0x438C
     const previous = game?.state;
     if (level !== firstLevel || level === NEW_GAME_LEVEL) { // 1000:198E, not in demo mode
       const picture = yield loadPicture(intermissionPicture(assets.exe, level));
@@ -111,7 +119,7 @@ function* gameSession(firstLevel) {
     const state = game.state;
     stepFrame(state, 0, retrace.ticks); yield; stepFrame(state, 0, retrace.ticks); yield; // two warm-up passes of 37D6 (1000:1F8D)
     renderGame(); yield* idle(fadeIn(display, game.dac), state); // 1000:1FB9
-    setReload(timer, RELOAD.game); // 1000:1FBE: in-game music at 120 Hz
+    music.start('ingame', assets.songs.ingame, { stopFirst: false }); // 1000:1FBE (2402); the driver sets 120 Hz
     inGame = true;
     let result = null;
     for (;;) { // 1000:34E6
@@ -122,11 +130,13 @@ function* gameSession(firstLevel) {
       if (key === 'abort' || state.levelOver) { result = key === 'abort' ? 'aborted' : state.levelOver; break; }
       stepFrame(state, keyboard.inputByte(), retrace.ticks);
       for (const id of state.sounds) effects.play(id);
+      // 1000:5FBD starts the alarm song without stopping the in-game one (see docs/port/avmfm.md 2.4).
+      if (state.music !== music.song) music.start(state.music, assets.songs[state.music], { stopFirst: false });
       renderGame(); display.dac.set(state.redAlert ? game.redDac : game.dac);
       yield;
     }
     inGame = false;
-    setReload(timer, RELOAD.stopped); // 1000:1FDB
+    music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
     if (result !== 'complete') return result === 'aborted' ? 'Game abandoned.' : 'Game over.'; // 4109 game-over picture not reproduced yet
     if (level === 18) return 'All levels complete. The ending sequence (1000:41A2) is not reproduced yet.';
@@ -139,6 +149,26 @@ const strictReport = message => { if (!$('preview').checked) throw new Unsupport
 async function loadPicture(name) { const bytes = decompressLzhuf(await assets.source.read(name)); return { pixels: bytes.subarray(0, 64000), palette: bytes.subarray(64000, 64768) }; }
 
 let waiting = false, resumeWith;
+// Music: the OPL output for one retrace, with driver ticks at the IRQ times inside it, queued as Web Audio chunks.
+let opl = null, music = null, musicOut = null, musicClock = 0, samplePhase = 0, chunk = [];
+const CHUNK = 2048;
+function renderMusic() {
+  samplePhase += OPL_RATE / RETRACE_HZ;
+  const total = Math.floor(samplePhase); samplePhase -= total;
+  const out = new Float32Array(total); let done = 0;
+  for (const t of retrace.music) {
+    const at = Math.min(total, Math.round(t * OPL_RATE));
+    opl.render(out, done, at - done); done = at; music.irq();
+  }
+  opl.render(out, done, total - done);
+  chunk.push(out);
+  if (chunk.reduce((n, c) => n + c.length, 0) < CHUNK) return;
+  const length = chunk.reduce((n, c) => n + c.length, 0), buffer = audio.createBuffer(1, length, OPL_RATE), data = buffer.getChannelData(0);
+  let at = 0; for (const c of chunk) { data.set(c, at); at += c.length; } chunk = [];
+  const node = audio.createBufferSource(); node.buffer = buffer; node.connect(musicOut);
+  if (musicClock < audio.currentTime + 0.02) musicClock = audio.currentTime + 0.08; // (re)start with a little latency
+  node.start(musicClock); musicClock += length / OPL_RATE;
+}
 function tick(now) {
   if (!running) return;
   accumulator = Math.min(accumulator + now - last, FRAME_MS * 8); last = now;
@@ -146,6 +176,7 @@ function tick(now) {
     while (accumulator >= FRAME_MS && !waiting) {
       retrace = advanceRetrace(timer, inGame ? GAME_OPEN_SHARE : 1);
       const step = session.next(resumeWith); resumeWith = undefined;
+      if (opl) renderMusic();
       accumulator -= FRAME_MS;
       if (step.done) { present(); finish(step.value); return; }
       if (step.value instanceof Promise) {
@@ -197,4 +228,4 @@ if (import.meta.env.DEV) {
   } catch { status('Open your original game folder to start.'); }
 } else status('Open your original game folder to start. Files are read in your browser and not uploaded.');
 
-window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; } };
+window.__alienBreed = { get state() { return game?.state; }, get framebuffer() { return game?.framebuffer; }, get display() { return display; }, get running() { return running; }, get level() { return game?.level; }, get effectsPlayed() { return effects?.played ?? []; }, get music() { return { song: music?.song, scheduled: musicClock } }, get timer() { return { ...timer }; } };
