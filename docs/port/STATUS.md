@@ -1,69 +1,73 @@
 # Port status
 
-Updated 2026-10-18 (level 1 completable). Evidence for each claim: [evidence.md](evidence.md). Scenarios: [scenarios/](scenarios/).
+Updated 2026-10-18 (all levels, sound effects, FM music). Evidence for each claim: [evidence.md](evidence.md); music driver:
+[avmfm.md](avmfm.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
 
 `ALIEN.EXE` SHA-256 `0787a2ca…e0c7` (IBM PC, passcode compare skipped) or `ALIEN.EX_` `8d998048…ac2a` (the same program
 with the check). Other builds are refused at load. Assets come from the user's `game/` folder or a folder picked in the
-browser; tables are read from the executable at runtime.
+browser; tables, texts, scripts and the music driver are read from the user's files at runtime.
 
 ## Working route
 
-`npm run dev`, open `/game.html`, press **Play**. Level index 2 (`LBMZ.HUF`, the first level and the attract demo's
-level) starts at the original's spawn point. The player walks with the arrow keys (3 px per frame, diagonals
-unnormalised), collides per axis with sliding, rides conveyors, obeys one-way cells, picks up keys, first aid, ammo,
-extra lives and credits, takes damage from hazard cells, and opens doors with keys or by shooting them. Firing uses the original fire rate, ammo cost,
-shot speeds and start offsets; impacts, alien eggs, alien deaths and explosions run the original object scripts read
-from the executable. Aliens spawn, hatch, wander or chase with the original random generator, collide with walls and
-each other, hurt the player on contact and die from shots. The camera follows with the original's dead zone and step
-limits. Losing all energy plays the original dying script and respawns at the last safe position with temporary
-invulnerability; losing the last life ends the game. Shooting the four generators starts the self-destruct: red
-palette, the countdown digits on screen and a timer driven by explicit INT 8 ticks; reaching the exit pad at the start
-completes the level, and running out of time ends the game after the original's explosion sequence. The status panel
-shows energy, lives, clips, bullets and keys as the original draws them.
+`npm run dev`, open `/game.html`, press **Play** (Z fires and skips screens, arrows move, 1 cycles weapons, Esc abandons).
+A new game starts like the original's: intermission (CARGOBAY and the deck 1 briefing), then level index 1 (`L0MZ`).
+Every exit leads through the intermission (deck lift with the deck-man, briefing, level code) to the next index, carrying
+the player's energy, lives, keys, ammo, weapons, credits and tallies, the random generator and the counters the
+original never resets. After index 18 the ending plays; every finished game ends on the game-over screen.
+`?level=N` (development) starts a new game at index N without the first intermission.
+
+In a level: walking, collision, conveyors, one-way cells, hazards, pickups, doors (keys or shooting), all seven
+weapons including bouncing shots, destructible walls with burning debris, aliens and eggs, generators, the
+self-destruct with its countdown and explosion sequence, the exit rules per level, the bosses of levels 5, 8 and 17
+(objective cell 0x3D), the scripted spawns of levels 16 and 17 (cell 0x0A), red palettes on levels 14 and 15.
+
+Sound: the 25 digital effects with the original's single-voice priority rule; the game-over sample. Music: the five CMF
+songs through a port of the original FM driver (title, in-game, alarm, monster, Intex) into an OPL2 synthesizer, at the
+PIT rates the driver programs, with the alarm song's start-without-stop quirk.
 
 **Strict mode (default)** stops with a diagnostic as soon as the original would do something not reproduced yet.
-**Preview mode** (checkbox) skips such behaviour instead and lists what it skipped; it is not faithful and never counts
-as verification.
+**Preview mode** (checkbox) skips such behaviour and lists it on screen; it is not faithful and never counts as verification.
 
 ## Verification
 
 | Command | What it checks |
 | --- | --- |
 | `npm test` | Unit tests; tests needing the original files skip without them. |
-| `npm run verify` | Requires the original files. Runs every test with skipping forbidden (missing fixtures, zero or skipped tests fail), then the browser scenario in headless Chrome. |
+| `npm run verify` | Requires the original files. Every test with skipping forbidden, then the browser scenario in headless Chrome (intermission, new game at index 1, level index 2 movement, firing, sound, aliens, music at 120 Hz). |
+| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, with a negative control. |
 
 Verified levels, from strongest to weakest:
 
-- **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` replayed from level start with
-  the original's seed reproduces three unfitted checkpoints (frames 100, 300, 500): player position, sprite frame,
-  energy, ammo, fire and walk counters, camera, live aliens, object count, RNG state, the first alien's slot, its
-  spawn cooldown and its object script frame. The whole 1024-frame demo replays without reaching unimplemented
-  behaviour. A negative control (one dropped input byte) fails the comparison.
-- **Browser acceptance** (`scripts/browser-scenario.mjs`): real key events in Chrome, asset loading from `game/`, spawn
-  point, 3 px steps, ~70 updates per second, camera follow, rendered playfield, firing and impact, first alien spawn,
-  alien drawn from the alien sheet and palette bank.
-- **Routine checks** (`test/*.test.js`): map decoding (hash), RNG against an independent trace, collision, pickups, BCD,
-  animation ticker.
+- **Independent runtime**: the music driver port against the original's memory (above).
+- **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
+  checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
+- **Browser acceptance** (`scripts/browser-scenario.mjs`).
+- **Routine checks**: map decoding, RNG trace, collision, pickups, BCD tallies, weapon cycling, bouncing shots,
+  destructible walls, bosses on levels 5/8/17, scripted spawns, PIT model, sound priority, song loop restart.
+  Everything new in this milestone except the music driver is static analysis checked by these tests, not yet compared
+  with original runs.
 
 ## Known limitations
 
-- Not implemented (strict stop): bouncing shots (weapons 3 and 7), destructible walls (0x12/0x13), the Intex terminal
-  and shop, level 16/17 objectives, object hooks (bosses), child objects, two players. Not present at all yet: sound
-  and music, menus and the title, loading the next level after an exit, the game-over picture, levels other than index 2.
-- INT 8 work (the self-destruct seconds) is applied at the start of a frame with a deterministic 96 Hz : 70.086 Hz
-  tick schedule in the browser; the original's interrupt phase within a frame is not modelled. The tick count per
-  frame is an explicit simulation input, so tests and replays can supply the original's values.
-- The original's spawn scan creates 5 phantom spawn records from reads above the map; they can never spawn and are
-  omitted. The level-start door and decor scans have the same out-of-map reads; the port skips those points.
-- The level-start scans skip probe points on world row/column 0, where the original reads unrelated memory.
-- Frame rate: one update per 70 Hz retrace with the lag flag at 0 (a fast machine). The original speeds movement up
-  when a frame takes 5 or more 96 Hz ticks; that is not modelled.
-- Tile animation positions and the tile-versus-sprite camera lag are observed on two screenshots only.
+- Not implemented (strict stop): the Intex terminal and shop (action key on a terminal), the map screen (needs the
+  Intex), two players, shots more than 3 pixels above the map. Not present: the title and menus (the port starts a
+  one-player game directly), the attract demo outside the tests.
+- Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace with the lag flag at 0. In-game the PIT runs
+  at 120 Hz; interrupts arriving while the frame has them disabled are collapsed and do not tick the music. The share of
+  the frame before that window is a machine property; the port uses 0.8, which makes in-game songs advance at the
+  96 ticks/s their CMF headers declare. The self-destruct timer runs at the full 120 Hz under this model.
+- The OPL2 synthesizer is an approximation of the chip's sound (envelopes, key scaling, rhythm section); the register
+  writes it receives are exact. Waveform select is never enabled by the game, so all operators are sines.
+- Counters the original never resets start at their boot values for a new game; in the original they depend on how
+  long the title and attract loop ran.
+- The boss's wall tests use an unknown leftover register as the "own" cell; occupied cells are treated as blocking.
+- The level-start and spawn scans skip probe points the original reads from outside the map (see evidence.md).
+- The panel reload calls after a boss starts or dies (`209E`, `A316`, `A31A`) are not reproduced; the panel is redrawn
+  every frame anyway.
 
 ## Next milestone
 
-Verify the new level-1 endgame against the original (a recorded run that destroys a generator, a player death and a
-countdown second, captured at the frame flip), then the remaining level-1 behaviours (bouncing weapons need the Intex
-shop), sound effects through the Web Audio boundary, and loading the next level after the exit.
+The Intex terminal (shop, statistics, map), then original-run comparisons for the new paths (a boss fight, a level
+transition with carried state, the intermission timing), the title and menu, and two players.

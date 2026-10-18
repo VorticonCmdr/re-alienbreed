@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A vanilla JavaScript (no framework, no TypeScript) foundation for porting the IBM PC edition of Alien Breed (Team17 / A.V.M., 1993) to the browser. The current milestone is an asset viewer, not a playable game. Vite is the only dependency. Node 22.12+ or 24+.
+A vanilla JavaScript (no framework, no TypeScript) port of the IBM PC edition of Alien Breed (Team17 / A.V.M., 1993) to the browser: an asset viewer (`viewer.html`) and the playable game (`game.html`, `src/game/`). Vite is the only runtime dependency; Playwright drives the browser check. Node 22.12+ or 24+. Current state and limits: `docs/port/STATUS.md`; evidence: `docs/port/evidence.md`.
 
 ## Commands
 
@@ -12,6 +12,8 @@ A vanilla JavaScript (no framework, no TypeScript) foundation for porting the IB
 npm install
 npm run dev       # Vite dev server on 127.0.0.1:5173, opens /viewer.html
 npm test          # node --test (runs test/*.test.js)
+npm run verify    # needs game/: all tests with skips forbidden, then the headless Chrome scenario
+npm run verify:runtime  # needs local DOSBox captures in .work/captures (never committed)
 npm run build     # outputs dist/ (index.html + viewer.html entries)
 npm run preview
 node --test --test-name-pattern="VOC" test/formats.test.js   # run a single test by name
