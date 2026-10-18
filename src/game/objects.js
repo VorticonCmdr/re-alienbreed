@@ -31,6 +31,8 @@ export function setObjectType(state, record, type) { record.type = type; record.
 
 function freeRecord(state, record) {
   if (record.parent) state.report('Freeing a child object');
+  // 1000:759C clears all 0x6C bytes, including fields only aliens use (push, move mask, stuck, walk).
+  for (const k of Object.keys(record)) record[k] = typeof record[k] === 'number' ? 0 : typeof record[k] === 'boolean' ? false : null;
   Object.assign(record, emptyRecord()); state.objectCount--;
 }
 

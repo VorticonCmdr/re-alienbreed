@@ -282,7 +282,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
     spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
     bounceCounter: 0, // cs:5671, likewise
-    objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, emptyRecord), objectCount: 0,
+    objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, () => ({ ...emptyRecord(), push: 0, moveMask: 0, stuck: 0 })), // fields 7376 never sets: 0 after boot (observed) objectCount: 0,
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1, scriptedSpawn: null,
     rng: rng ? { ...rng } : seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
@@ -450,6 +450,8 @@ export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
   };
   state.shotPhase = (state.frameCounter >> 2) & 1; // cs:578C refreshed after 52F4 for the next frame's type-6 shots
   state.atFlip = { objectCount: state.objectCount, rng: { ...state.rng } }; // what the original holds at its frame flip (for comparisons)
+  if (state.recordFlip) Object.assign(state.atFlip, { objects: state.objects.map(r => ({ ...r })), players: state.players.map(p => ({ ...p })),
+    generatorsDestroyed: state.generatorsDestroyed });
   // 2EF5:12B4: the frame end takes the INT 8 count since the previous one; 5 or more makes this a lag frame.
   state.lag = !state.demoMode && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
@@ -657,7 +659,7 @@ function spawnAlien(state, slot) {
     let type = 6, x = r.x;
     if (r.type === 3) { type = 7; x = s16(x + 8); r.cooldown = s16(r.cooldown + 0x800); state.sounds.push(0x0a); }
     const object = allocObject(state, type, x, r.y); if (!object) return;
-    Object.assign(object, { walk: 0, facing: 1, energy: 0x10, push: 0, moveMask: 15, stuck: 0 });
+    Object.assign(object, { walk: 0, facing: 1, energy: 0x10 }); // 1000:5074: push +26, move mask +69 and stuck +4D keep the record's old values
     object.flags0B |= 0x80; slot.object = object;
     if (object.type !== 7) object.frame = object.animBase = 0x49;
     if (slot.kind === 2) { object.energy = 8; object.frame = object.animBase = 0x8d; }
@@ -679,7 +681,7 @@ function scriptedSpawn(state, slot) {
   slot.column = (speed >> 3) + (random(state) & 1) || 1;
   const object = allocObject(state, 6, x, y);
   if (object) {
-    Object.assign(object, { walk: 0, facing: 1, energy: 8, push: 0, moveMask: 15, stuck: 0, frame: 0x8d, animBase: 0x8d });
+    Object.assign(object, { walk: 0, facing: 1, energy: 8, frame: 0x8d, animBase: 0x8d });
     object.flags0B |= 0x80; slot.object = object; object.target = state.players[0];
     if (state.playerCount !== 1) state.report('Alien targets with two players');
   }
@@ -725,7 +727,7 @@ export function updateAliens(state) {
       if (hitAlien(state, slot, 0x40, p)) { died = true; break; }
     }
     if (died) continue;
-    const shot = state.shots.find(s => s.type && a.x >= s.x - 16 && a.x <= s.x + 16 && a.y >= s.y - 16 && a.y <= s.y + 16); // 1000:4987
+    const shot = state.shots.find(s => s.type && a.x >= s.x - 16 && a.x <= s.x + 16 && a.y >= s.y && a.y <= s.y + 0x20); // 1000:4987: y from shot y (+10h -10h) to +20h
     if (shot) { const damage = t.shotDamage[shot.type]; shot.type = 0; if (hitAlien(state, slot, damage, lastPlayer)) continue; }
     if (s16(slot.timer) >= 0) slot.timer = s16(slot.timer - 1);
     else {
