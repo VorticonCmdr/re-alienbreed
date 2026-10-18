@@ -57,8 +57,9 @@ in-level items; screens need breakpoints on their retrace waits instead.
 ## 4. Not covered at all
 
 - The SETUP program and sound-card selection: the port always behaves like the Sound Blaster set-up (`[AF94]` = 4).
-- The pause and quit keys of SETUP.DAT (offsets `0x64`, `0x66`): the port reads the bindings but does nothing with them.
-  The original reads the pause key at `1000:3A98`; the quit key has no direct reference.
+- The quit key of SETUP.DAT (offset `0x66`): it has no direct reference in the code. The slowdown loop after the pause
+  test (`1000:3ACB`, SETUP.DAT `0x0A`: 0x2800 iterations for 1, 0x5000 for anything higher, since the `MUL` result never
+  reaches `CX`) is CPU time and not modelled.
 - Joysticks: the original polls them every 4th INT 8 tick (`1000:782E`) when SETUP.DAT selects one and reads the input
   word from `B42A`/`B42C`; the port takes the keyboard only.
 - Other builds of the game: the port refuses executables other than the two supported hashes.

@@ -215,3 +215,9 @@ the lag flag forced to 0. Captures in `.work/captures` (local), checked by `npm 
 | Attract demo with TWO selected: `[B096]`/`[B098]` = FFFF and `[B09A]` = 2, but player 2's record is never created (cs:8716 = 2). The first pass runs the player-2 update on the cleared record and its death check takes it out (energy 0x40, lives 0xFF, type 3, `+6B` = 0x4B, inactive), `[B09A]` = 1. At frame 100 the map, the RNG, records 2–5, the camera and player 1 equal the one-player demo; the port matches all of these. The port skips the update of the cleared record, whose probes around (0, 0) read memory outside the map (observed to change nothing) | observed + approximation | `npm run verify:runtime` |
 | The level-start redraw (`18B2:17F6`/`17FA`) draws both halves of the panel; in a one-player game player 2's half shows the cleared record (2UP with empty energy, lives and ammo bars), in the original and the port alike | static + observed (DOSBox and browser screenshots, level 1) | `18B2:17F6` |
 | The Intex belongs to the player who pressed action on the terminal (player 2 if both did in one frame), reads only that player's input and spends that player's credits; the other player is frozen. With two players and SHARE CREDITS on, the credit pickups give each player half (50 / 500 BCD) | static | `1000:5BD6`, `2588`, `6467` |
+
+## Pause
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| At the end of every pass of `37D6`, if `[B086]` equals the pause key (SETUP.DAT `0x64`, P in the shipped file), the game busy-waits until `[B086]` is its break code, sets `cs:37D3` (the countdown freeze), waits for the make code again and for its break, and clears `cs:37D3` (also cleared on every other pass). No frames run in between; INT 8 keeps the music, the timer and `[8184]` going, so the countdown runs until the first release and the next frame is a lag frame | static | `1000:3A98`–`3AC5` |

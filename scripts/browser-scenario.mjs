@@ -99,6 +99,15 @@ try {
   check('no strict stop so far', () => assert.equal(alien.diagnostic, ''));
   const musicState = await page.evaluate(() => ({ ...window.__alienBreed.music, reload: window.__alienBreed.timer.reload }));
   check('in-game music plays through the FM driver at the 120 Hz PIT rate', () => { assert.equal(musicState.song, 'ingame'); assert.ok(musicState.scheduled > 0); assert.equal(musicState.reload, 0x26d7); });
+  // Pause (1000:3A98): P, then the game waits for its release, a second press and its release; music goes on, no frames run.
+  const beforePause = await page.evaluate(() => ({ frame: window.__alienBreed.state.frame, music: window.__alienBreed.music.scheduled }));
+  await page.keyboard.down('KeyP'); await page.waitForTimeout(80); await page.keyboard.up('KeyP'); await page.waitForTimeout(600);
+  const paused = await page.evaluate(() => ({ frame: window.__alienBreed.state.frame, music: window.__alienBreed.music.scheduled }));
+  check('P pauses: no frames, the music goes on', () => { assert.ok(paused.frame - beforePause.frame <= 2, `${beforePause.frame} -> ${paused.frame}`); assert.ok(paused.music > beforePause.music); });
+  await page.keyboard.down('KeyP'); await page.waitForTimeout(80); await page.keyboard.up('KeyP');
+  await page.waitForFunction(f => window.__alienBreed.state.frame > f, paused.frame, { timeout: 3000 });
+  const resumed = await page.evaluate(() => ({ frame: window.__alienBreed.state.frame, lag: window.__alienBreed.state.lag }));
+  check('a second P resumes', () => assert.ok(resumed.frame > paused.frame));
   // An Intex terminal (cell 0x17): stand on it, press action; skip the boot text, go up to ABORT (the cursor starts on
   // the first line), fire; the game resumes with the in-game song from its start.
   await page.evaluate(() => {

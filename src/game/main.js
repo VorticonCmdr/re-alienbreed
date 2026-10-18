@@ -222,7 +222,7 @@ function* terminal(state, player, kind) {
   for (let i = 0; i < 2; i++) { // 37D6 twice
     state.sounds = []; stepFrame(state, [inputFor(0), inputFor(1)], retrace.ticks);
     for (const id of state.sounds) effects.play(id);
-    renderGame(); yield;
+    renderGame(); yield* pauseCheck(state); yield;
   }
   inGame = false;
   redrawPanels(state);
@@ -231,6 +231,20 @@ function* terminal(state, player, kind) {
   state.countdownFrozen = false; inGame = true;
 }
 const DEMO_LEVEL = 2;
+
+// 1000:3A98-3AC5, at the end of every pass of 37D6: with the pause key (SETUP.DAT 0x64) as the last scancode [B086] the
+// game busy-waits for its release, then with the countdown frozen (cs:37D3) for a second press and its release. No
+// frames run and the screen keeps the last flip; INT 8 (music, timer, [8184]) goes on, so a lag frame follows.
+// The delay loop after it (3ACB, SETUP.DAT 0x0A) is CPU time and not modelled.
+function* pauseCheck(state) {
+  const key = assets.setup[0x64];
+  if (keyboard.lastScancode !== key) return;
+  const wait = function* (code) { while (keyboard.lastScancode !== code) { intTicks(state); yield; } };
+  inGame = false;
+  yield* wait(key | 0x80); state.countdownFrozen = true;
+  yield* wait(key); yield* wait(key | 0x80);
+  state.countdownFrozen = false; inGame = true;
+}
 
 function* gameSession(firstLevel, demo) {
   let carried = { party: newParty(), globals: null, rngSeed: newGameSeed() };
@@ -264,6 +278,7 @@ function* gameSession(firstLevel, demo) {
       if (state.music !== music.song) { music.start(state.music, assets.songs[state.music], { stopFirst: state.musicStop }); state.musicStop = false; }
       if (state.alienPalette !== game.alienPalette) bossPalette(state);
       renderGame(); display.dac.set(state.redAlert ? game.redDac : game.dac);
+      yield* pauseCheck(state);
       if (state.intexRequest) { const player = state.intexRequest; state.intexRequest = null; yield* terminal(state, player, 'intex'); continue; } // 1000:35E0
       const map = mapRequested(state, keyboard.lastScancode); // 1000:35F2
       if (map.consumed) keyboard.consumeScancode();
