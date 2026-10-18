@@ -120,8 +120,15 @@ level-to-file mapping is not yet located in the code.
 ## Copy protection
 
 `1000:03D5` shows a manual-lookup prompt, picks an entry from `[B038] & 0x3F`, and reads three
-keystrokes. In `ALIEN.EXE` the compare is skipped (`1000:0452`), so any three keys continue. The
-browser port starts after this screen. The code table is not read or reproduced.
+keystrokes. In `ALIEN.EXE` the compare is skipped (`1000:0452`), so any three keys continue. By default the
+browser port starts after this screen; the page option "Ask for the code" runs it (`src/game/passcode.js`).
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| `ALIEN.EXE` differs from `ALIEN.EX_` only in five bytes at file `0xC52` (`1000:0452`): `EB 22 90 90 90` jumps to `0476` → `0493` (RET) | static (byte compare) | `cmp ALIEN.EXE ALIEN.EX_` |
+| Unpatched flow: `03C1` waits 100 retraces and sets three tries (`cs:0496`); `03D5` advances the RNG and takes entry = `[B038]` & 0x3F from the 64 six-byte records at `cs:049A` (row digits, column, then the three code characters), writes table letter 'A' + entry / 16, the row and the column into the prompt at `cs:061A` (`cs:0687`, `068D`/`068E`, `0697`), sets text mode 2, prints it with INT 21h/09 and reads three characters with INT 21h/01 (echoed; Enter counts) | static (`ALIEN.EX_` disassembled with ndisasm) | `1000:03C1`–`0441` |
+| `0452`–`0474` compare the three characters byte for byte (case-sensitive); a mismatch waits 50 retraces (`0478`), decrements the tries and asks again with a new entry, and after the third failure jumps to `7B0F` (text mode, the exit message at `DS:5BBA`, program end) | static | `1000:0452`–`0493` |
+| How the RNG is seeded before this point is not established; the port picks the entry at random | approximation | — |
 
 ## Sound effects
 

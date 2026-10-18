@@ -12,6 +12,7 @@ import { intermission, intermissionPicture, deckmanSheetName } from './intermiss
 import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
 import { titleLoop, titleFiles } from './title.js';
 import { intro, introFiles } from './intro.js';
+import { passcode } from './passcode.js';
 import { intexSession, mapSession, intexFiles, createIntexMemory } from './intex.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
@@ -135,6 +136,15 @@ function* idle(generator, state) { for (const _ of generator) { if (state) intTi
 // The program after start-up (1000:0831): title music, then the title loop, games and attract demos for ever.
 function* program(devLevel) {
   if (devLevel !== null) return yield* gameSession(devLevel, false);
+  if ($('passcode').checked) { // ALIEN.EX_ 1000:03C1-0493; the supplied ALIEN.EXE jumps over the comparison
+    phase = 'passcode'; typedChars = []; canvas.hidden = true;
+    const ok = yield* passcode({ exe: assets.exe, show: text => { $('dos').textContent = text; $('dos').hidden = false; },
+      pick: () => Math.floor(Math.random() * 256), // the game's RNG low byte [B038]; how the RNG is seeded this early is not established
+      takeChar: () => typedChars.length ? typedChars.shift() : null,
+      log: e => console.info(`Alien Breed code for Table-${e.table} Row-${e.row} Column-${e.column}: ${e.code}`) });
+    typedChars = null; $('dos').hidden = true; canvas.hidden = false;
+    if (!ok) throw new ProgramExit(); // 0490: three wrong codes jump to the program exit (7B0F)
+  }
   phase = 'intro'; yield* intro({ display, logos: assets.logos, playSample: () => effects.playBuffer(assets.logoSample) }); // 1000:0761-0767
   phase = 'title'; music.start('title', assets.songs.title, { stopFirst: false }); // 1000:0BAD
   for (;;) {
@@ -145,7 +155,7 @@ function* program(devLevel) {
     music.start('title', assets.songs.title, { stopFirst: true }); // 1000:204E / 2053 (the music was stopped at 2017)
   }
 }
-let lastResult = null, phase = null;
+let lastResult = null, phase = null, typedChars = null; // typedChars: INT 21h/01 input while the code prompt waits
 
 // The Intex (1000:2588) or the M screen (33C6), then their common way back (28B3 / 3465): a frame end that sees all
 // the ticks since the last one (so a lag frame follows), two game frames on a black palette, the fade-in, and for
@@ -329,6 +339,10 @@ async function begin(label) {
 }
 
 addEventListener('keydown', event => {
+  if (typedChars && running) { // DOS character input for the code prompt
+    const c = event.key.length === 1 ? event.key : { Enter: '\r', Backspace: '\b', Escape: '\x1b', Tab: '\t' }[event.key];
+    if (c !== undefined) { event.preventDefault(); typedChars.push(c); } return;
+  }
   if (!keyboard) return;
   if (keyboard.handles(event)) { event.preventDefault(); keyboard.down(event); }
 });

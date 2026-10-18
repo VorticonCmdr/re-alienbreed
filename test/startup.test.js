@@ -42,3 +42,24 @@ test('demo recording: input bytes go into the shared buffer, lag stays 0, and 0x
   assert.equal(state.demoRecord, null); assert.equal(state.demoSaved, buffer);
   stepFrame(state, 0, 6); assert.equal(state.lag, 1, 'the lag flag works again after the recording');
 });
+
+test('code check (ALIEN.EX_ 1000:03C1): 100 retraces, the right three characters pass, three wrong tries end the program', { skip: missing }, async () => {
+  const { passcode, passcodeEntry, passcodePrompt } = await import('../src/game/passcode.js');
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const entry = passcodeEntry(exe, 0x25), prompt = passcodePrompt(exe, entry);
+  assert.equal(entry.table, 'C'); assert.equal(entry.code.length, 3);
+  assert.ok(prompt.includes(`Table-${entry.table}`) && prompt.includes(`Row-${entry.row}`) && prompt.includes(`Column-${entry.column}`));
+  const run = (answers, picks) => {
+    const queue = [...answers], shown = [], logged = []; let retraces = 0, result;
+    const g = passcode({ exe, show: t => shown.push(t), pick: () => picks.shift(), takeChar: () => queue.length ? queue.shift() : null, log: e => logged.push(e) });
+    for (let step = g.next(); ; step = g.next()) { if (step.done) { result = step.value; break; } retraces++; }
+    return { result, retraces, shown, logged };
+  };
+  const right = run([...entry.code], [0x25]);
+  assert.deepEqual([right.result, right.retraces], [true, 100]); assert.ok(right.shown.at(-1).endsWith(entry.code));
+  const other = passcodeEntry(exe, 0x26), wrong = run([...'\r\r\r', ...'\r\r\r', ...other.code], [0x25, 0x25, 0x26]);
+  assert.deepEqual([wrong.result, wrong.retraces, wrong.logged.length], [true, 200, 3], 'a new entry for every try, 50 retraces after each wrong code');
+  const flipped = [...entry.code].map(c => c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase());
+  if (flipped.join('') !== entry.code) assert.equal(run([...flipped, ...flipped, ...flipped], [0x25, 0x25, 0x25]).result, false, 'case-sensitive');
+  assert.equal(run([...'xx\rxx\rxx\r'], [0x25, 0x25, 0x25]).result, false, 'three wrong codes');
+});

@@ -135,6 +135,21 @@ try {
   await page.locator('#dos').waitFor({ state: 'visible', timeout: 5000 });
   const dos = await page.evaluate(() => ({ text: document.getElementById('dos').textContent.trim().length, canvas: document.getElementById('screen').hidden, running: window.__alienBreed.running }));
   check('the exit cheat word ends the program with the text-mode message', () => assert.deepEqual([dos.text > 10, dos.canvas, dos.running], [true, true, false]));
+  // The optional code check of the unpatched program: the prompt in text mode, the answer from the console log.
+  const logs = []; page.on('console', m => logs.push(m.text()));
+  await page.goto(url); await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
+  await page.check('#passcode'); await page.click('#play');
+  await page.waitForFunction(() => window.__alienBreed?.phase === 'passcode' && document.getElementById('dos').textContent.length > 50, null, { timeout: 10000 });
+  const logged = logs.find(t => t.startsWith('Alien Breed code for')), answer = logged?.split(': ')[1];
+  const prompt = await page.evaluate(() => ({ text: document.getElementById('dos').textContent, canvas: document.getElementById('screen').hidden }));
+  check('the code option shows the prompt in place of the game and logs its answer', () => {
+    assert.ok(answer?.length === 3, logged); assert.equal(prompt.canvas, true);
+    const [, table, row, column] = logged.match(/Table-(.) Row-(..) Column-(.)/); assert.ok(prompt.text.includes(`Table-${table}`) && prompt.text.includes(`Row-${row}`) && prompt.text.includes(`Column-${column}`));
+  });
+  await page.keyboard.type(answer, { delay: 60 });
+  await page.waitForFunction(() => window.__alienBreed.phase === 'intro', null, { timeout: 5000 });
+  const after = await page.evaluate(() => ({ dos: document.getElementById('dos').hidden, canvas: document.getElementById('screen').hidden }));
+  check('the right code continues to the logos', () => assert.deepEqual(after, { dos: true, canvas: false }));
   check('no uncaught page errors', () => assert.deepEqual(errors, []));
 } finally {
   await browser.close(); await server.close();

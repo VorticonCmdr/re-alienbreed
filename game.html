@@ -9,9 +9,11 @@
 <body>
   <main class="shell">
     <canvas id="screen" width="320" height="200" aria-label="Alien Breed game screen" tabindex="0"></canvas>
+    <pre id="dos" class="dos" hidden></pre>
     <section id="setup" class="setup">
       <h1>Alien Breed</h1>
       <p>This port runs from your original IBM PC game files. They are read in your browser and never uploaded.</p>
+      <label class="mode"><input id="passcode" type="checkbox"> Ask for the code from the manual at start-up, as the unpatched game does (the answer is logged to the browser console)</label>
       <label class="mode"><input id="preview" type="checkbox"> Preview mode: skip behaviour that is not reproduced yet instead of stopping (listed on screen; not faithful)</label>
       <button id="play" type="button" hidden>Play</button>
       <button id="choose-folder" type="button">Open game folder</button>
@@ -22,7 +24,6 @@
     <p id="preview-banner" class="preview" hidden></p>
     <p class="help">Arrow keys move, <span id="fire-key">Z</span> fires, Esc returns to this screen. Strict mode stops on any behaviour this port does not reproduce yet.</p>
     <p><a id="demo-file" download="DEMO.DAT" hidden>Save the recorded DEMO.DAT</a></p>
-    <pre id="dos" class="dos" hidden></pre>
     <p id="debug" class="debug"></p>
   </main>
   <script type="module" src="./src/game/main.js"></script>

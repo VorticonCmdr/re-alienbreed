@@ -12,7 +12,8 @@ browser; tables, texts, scripts and the music driver are read from the user's fi
 ## Working route
 
 `npm run dev`, open `/game.html`, press **Play** (Z fires and skips screens, X is the action key, arrows move, 1 cycles
-weapons, M shows the map once bought, Esc abandons). Start-up shows the three logos (TEAM_17, AVM256 with its sample,
+weapons, M shows the map once bought, Esc abandons). With the option "Ask for the code", the unpatched game's manual
+code prompt comes first (three tries; the answer is logged to the browser console). Start-up shows the three logos (TEAM_17, AVM256 with its sample,
 AL_LOGO; about 11 s, no skip), then the title with its song and menu (players, share credits, start game); idling runs the credits, the story pages and the attract demo. A new game starts like the
 original's: intermission (CARGOBAY and the deck 1 briefing), then level index 1 (`L0MZ`).
 Every exit leads through the intermission (deck lift with the deck-man, briefing, level code) to the next index, carrying
