@@ -102,7 +102,7 @@ level-to-file mapping is not yet located in the code.
 | Claim | Level | Where |
 | --- | --- | --- |
 | Level index `[B0B2]` selects the map record through a 19-entry word table at `2041:957D`. Records are `{far pointer to name, 4 bytes}` followed by the name. Index → map: 0 LZMZ, 1 L0MZ, 2 LBMZ, 3 L3MZ, 4 L4MZ, 5 L5MZ, 6 PCMAP4, 7 L6MZ, 8 L7MZ, 9 L8MZ, 10 L9MZ, 11 PCMAP3, 12 PCMAP5, 13 LAMZ, 14 L1MZ, 15 PCMAP2, 16 PCMAP1, 17 L2MZ, 18 PCMAP6 | static | `1000:1B70` |
-| First playable level and the attract demo both use index 2 (`LBMZ.HUF`) | observed (`[B0B2] = 2` after both inits; demo flag `cs:[8716] = 2` during the second) | — |
+| The attract demo uses index 2 (`LBMZ.HUF`). A new game starts at index **1** (`L0MZ.HUF`): `1000:17DE` sets `[B018] = 1`, or 2 when the demo mode `cs:[8716]` is non-zero, and `1830` copies it to `[B0B2]`. The earlier note that the first playable level is index 2 came from runs that reached the attract demo, not a new game (re-checked 2026-10-18: both observed level starts had `cs:[8716] = 2`) | static; observed (demo) | `1000:17DE`–`1830` |
 | The loader decompresses the file into segment `[B411]` (observed `0x3811`), copies the first 0x2D00 words (23,040 bytes) to `2EF5:635A`, then calls the level initialiser `2EF5:0000`. The load buffer is reused soon afterwards | static + observed | `1000:1B70`–`1BB7` |
 | The map is 120 × 96 cells of **big-endian** words. The initialiser writes `(w & 0xFC00) >> 10` (6-bit type) as a word array at `2041:0000` and replaces each cell in place with `(w & 0x1FF) << 4` (tile index as a 256-byte paragraph offset). Bit 9 is unused | static; tile pass observed exact for 77 of 96 rows ~1 s into a demo run (the remaining rows contain cells changed during play, not yet identified) | `2EF5:0000`–`0071` |
 | `LBMZ.HUF` decompresses with `src/lzhuf.js` to 26,228 bytes; the remaining 3,188 bytes after the map are not yet explained | static (length) | — |
@@ -122,3 +122,23 @@ level-to-file mapping is not yet located in the code.
 `1000:03D5` shows a manual-lookup prompt, picks an entry from `[B038] & 0x3F`, and reads three
 keystrokes. In `ALIEN.EXE` the compare is skipped (`1000:0452`), so any three keys continue. The
 browser port starts after this screen. The code table is not read or reproduced.
+
+## Sound effects
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| Effects go through `1000:72B0` with the sound id in AX. With the Sound Blaster device (`[AF94] = 4`) it calls `1000:7300`; devices 5–7 map the id through `cs:7243` to FM effects instead (not used by this port) | static | `1000:72B0` |
+| Sound id *n* plays sample *n* of the list loaded at startup: near pointers at `1C9C:0184` up to `0xFFFF` (25 `sams\*.voc` names, loaded in order into far pointers at `DS:D3FC`, `1C9C:0365`). The driver is given the file data from offset `0x1A` (after the VOC header) | static | `1C9C:0365`, `1000:733B` |
+| One voice. If the driver status word `[AFD0]` is 0 the stored priority `cs:[72AD]` is reset to 0 and the sample plays; otherwise the new sample is dropped when the stored priority is greater (signed `JG`) than the new id's priority `cs:[7275 + 2n]`, and replaces the playing one when equal or higher (driver function 8 stops it first) | static | `1000:7300`–`735E` |
+| All 43 call sites of `72B0` were checked: each is either a `sounds.push` in the port (pickups, doors, hurt, hazards, firing, out of ammo, impacts, generators, countdown, explosions, alien kill, egg, weapon cycle) or inside a path that stops in strict mode (bouncing shots `5448`, destructible walls `5563`/`55DA`, Intex `2657`/`5BF9`/`14DA`, boss hooks `3669`/`6958`/`69AF`/`69EF`/`6C53`, level 16/17 `6456`, `7238` script sound from a non-implemented opcode path) | static | xrefs of `1000:72B0` |
+
+## Level sequence and carried state
+
+| Claim | Level | Where |
+| --- | --- | --- |
+| The main-loop pass `1000:34E6` checks keys before the level-over tests: `[B086]` (last INT 9 scancode) equal to the abort binding `[E7D5]` (SETUP.DAT `0x65`) ends the game; release of `1` (`0x82`) / `0` (`0x8B`) cycles player 1 / 2 to the next owned weapon (bit *w−1* of `+3E`) with sound 5; `M` (`0x32`) opens the map for a player whose `+62` bit 0 is set; `=`/`-` are cheats behind `cs:[7FD9] = 0xFF`; `R` starts demo recording behind `cs:[7FE2]` | static | `1000:34E6`–`3666` |
+| Then: exit taken `[B427]`, nobody alive `[B09A] = 0`, end sequence `[92F2] >= 0x8C` each leave the loop through the player save `1000:21A6` | static | `1000:35B5`–`35DF` |
+| After the loop: if the exit was taken, index 18 runs the ending (`1000:41A2`), index 0 runs `44EC`, any other index is incremented and the next level loads from `1000:1937`. Otherwise the music stops, the game-over screen (`4109`, not in demo mode) and the title follow | static | `1000:1FEE`–`205C` |
+| `1000:21A6` saves energy `+2E`, lives `+5B`, keys `+2C`, ammo `+42`, weapon `+5A`, owned weapons `+3E`, credits `+5E/+60`, map flag `+62` and the words `+63..+69`; `1000:1E15`–`1E6C` restores them at the next level start. A new game sets energy 0x40, lives 4, keys 0, ammo 0x17F, weapon 1, owned 0x7F (player 1; player 2 owns 1) and zeroes the saved words, so `+69` (the movement mask) starts at 0 | static | `1000:188B`–`1932`, `21A6`, `1E15` |
+| `+63..+6A` hold overlapping packed-BCD tallies: shots fired `+63` (`59DC`), kills `+65` (`4B5A`), doors opened `+67` (`4806`), each `ADD AX,1/DAA` then `ADC AX,0/DAA` on the next word. DAA adjusts AL only, so each word counts 00–99 in its low byte and carries into the next word's low byte | static | as listed |
+| Between levels (not in demo mode) `1000:44EC` shows an intermission: `CARGOBAY` before index 1, otherwise `DECKLIFT` with the deck-man animation (scripts, up to 150 frames or fire), a text page from the table at `cs:5BDE + 2·index` (400 frames or fire) and, for index > 1, a 9-character code from `cs:82A6 + 10·(index−2)` (3000 frames or fire) | static | `1000:44EC`–`476E` |

@@ -32,7 +32,7 @@ function fixture(types = {}) {
   const state = { tables, tiles: new Uint16Array(MAP_CELLS), types: new Uint16Array(MAP_CELLS), camera: { x: 0, y: 0 }, lag: 0, level: 2, strict: true, diagnostics: [], sounds: [], animations: Array(80).fill(null), doors: [], playerCount: 1, frame: 0, burning: 0, spreadCounter: 0,
     shots: Array.from({ length: 32 }, () => ({ type: 0 })) };
   for (const [cell, code] of Object.entries(types)) state.types[+cell] = code;
-  const player = { x: 100, y: 100, keys: 0, energy: 64, lives: 4, ammo: 0x17f, weapon: 1, credits: 0, walk: 0, animBase: 11, facing: 1, moveMask: 15, conveyor: 0, cell: -1, hurt: false, invulnerable: 0, onIntex: 0, fireRepeat: 0, state: 1 };
+  const player = { x: 100, y: 100, keys: 0, energy: 64, lives: 4, ammo: 0x17f, weapon: 1, credits: 0, walk: 0, animBase: 11, facing: 1, moveMask: 15, conveyor: 0, cell: -1, hurt: false, invulnerable: 0, onIntex: 0, fireRepeat: 0, state: 1, tally: new Uint8Array(8) };
   state.players = [player];
   return { state, player };
 }
@@ -103,4 +103,31 @@ test('HUD elements follow 18B2:17D0: clamps, icon widths, marker pixels and opaq
   assert.equal(at(56 + 30, 14), 0xf0 | ((56 + 30) & 15), 'bullets (0x17F >> 2) & 31 = 31 columns'); assert.equal(at(56 + 31, 14), 0xf0);
   assert.equal(at(128 + 24, 14 + 3), 0xff, 'keys marker when keys <= 6'); assert.equal(at(128, 14), 0xf0, 'no key icons');
   const frame = createFramebuffer(); blitPanel(frame, hud); assert.equal(frame[176 * 320 + 32], at(32, 2), 'panel row 2 lands on screen row 176');
+});
+test('tallies at +63..+6A: ADD/DAA then ADC/DAA adjust only the low byte of each word', async () => {
+  const { tallyIncrement, TALLY } = await import('../src/game/sim.js');
+  const t = new Uint8Array(8);
+  for (let i = 0; i < 99; i++) tallyIncrement(t, TALLY.kills);
+  assert.deepEqual([...t], [0, 0, 0x99, 0, 0, 0, 0, 0]);
+  tallyIncrement(t, TALLY.kills); assert.deepEqual([...t], [0, 0, 0x00, 0, 0x01, 0, 0, 0], 'hundreds carry into +67, not into AH');
+  t.set([0x09, 0x12]); tallyIncrement(t, TALLY.shots); assert.deepEqual([...t.subarray(0, 2)], [0x10, 0x12], 'AH kept');
+  t.set([0x99, 0x00, 0x99, 0x00]); tallyIncrement(t, TALLY.shots); assert.deepEqual([...t.subarray(0, 4)], [0x00, 0x00, 0x00, 0x00], 'double carry is dropped after the second word');
+  const d = new Uint8Array(8); d.set([0x99, 0, 0x0f, 0], 4); tallyIncrement(d, TALLY.doors); assert.deepEqual([...d.subarray(4)], [0, 0, 0x16, 0], 'door carry into the movement mask word');
+});
+test('1000:34E6 keys: releasing 1 cycles to the next owned weapon with sound 5; abort and unrelated keys', async () => {
+  const { mainLoopKeys } = await import('../src/game/sim.js');
+  const player = { weapon: 1, owned: 0x7f, map: 0 }, state = { players: [player], sounds: [], diagnostics: [], strict: true };
+  assert.equal(mainLoopKeys(state, 0x82, 0x01), 'consumed'); assert.equal(player.weapon, 2); assert.deepEqual(state.sounds, [5]);
+  player.weapon = 7; mainLoopKeys(state, 0x82, 0x01); assert.equal(player.weapon, 1, 'bit 7 is not owned, wraps to weapon 1');
+  player.owned = 0x05; player.weapon = 1; mainLoopKeys(state, 0x82, 0x01); assert.equal(player.weapon, 3);
+  assert.equal(mainLoopKeys(state, 0x02, 0x01), null, 'the press itself does nothing');
+  assert.equal(mainLoopKeys(state, 0x01, 0x01), 'abort'); assert.equal(mainLoopKeys(state, 0x8b, 0x01), 'consumed', 'player 2 key without player 2');
+  assert.equal(mainLoopKeys(state, 0x32, 0x01), 'consumed', 'M without the map does nothing');
+});
+test('the player save (1000:21A6) carries stats, tallies and the movement mask; a new game starts with mask 0', async () => {
+  const { savePlayer, newGamePlayer } = await import('../src/game/sim.js');
+  assert.deepEqual({ ...newGamePlayer(), tally: [...newGamePlayer().tally] }, { energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, tally: [0, 0, 0, 0, 0, 0, 0, 0], moveMask: 0 });
+  const p = { ...newGamePlayer(), energy: 12, keys: 3, moveMask: 15, x: 5, tally: Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8) };
+  const saved = savePlayer(p); p.tally[0] = 99;
+  assert.equal(saved.tally[0], 1, 'tally copied'); assert.equal(saved.x, undefined); assert.equal(saved.moveMask, 15); assert.equal(saved.keys, 3);
 });

@@ -88,6 +88,25 @@ export function addBcd(value, amount) {
   }
   return result >>> 0;
 }
+// Player record bytes +63..+6A hold overlapping packed-BCD tallies: shots fired at +63 (1000:59DC), kills at +65
+// (4B5A) and doors opened at +67 (4806). Each is ADD AX,1 / DAA on one word, then ADC AX,0 / DAA on the next; DAA
+// only adjusts AL, so AH never changes. +69 doubles as the movement mask, which the player update rewrites.
+const daa = (al, af, cf) => {
+  const oldAl = al, oldCf = cf;
+  if ((al & 15) > 9 || af) { al += 6; cf = oldCf || al > 0xff; } else cf = false;
+  if (oldAl > 0x99 || oldCf) { al += 0x60; cf = true; } else cf = false;
+  return { al: al & 0xff, cf };
+};
+export function tallyIncrement(tally, offset) {
+  let carry = 1;
+  for (const at of [offset, offset + 2]) {
+    if (at + 1 >= tally.length) return; // +6B onwards is not a tally
+    const ax = tally[at] | tally[at + 1] << 8, sum = ax + carry;
+    const r = daa(sum & 0xff, (ax & 15) + carry > 15, sum > 0xffff);
+    tally[at] = r.al; tally[at + 1] = (sum >> 8) & 0xff; carry = r.cf ? 1 : 0;
+  }
+}
+export const TALLY = { shots: 0, kills: 2, doors: 4 };
 function addCredits(state, player, single, shared) {
   if (state.playerCount === 1 || !state.shareCredits) player.credits = addBcd(player.credits, single);
   else for (const p of state.players) p.credits = addBcd(p.credits, shared);
@@ -214,7 +233,9 @@ function openDoors(state, player) {
     writeType(state, dx, dy, 0); startAnimation(state, vertical ? 0x8b74 : 0x8b58, worldCell(state, dx, dy));
     writeType(state, ...second, 0); startAnimation(state, vertical ? 0x8b82 : 0x8b66, worldCell(state, ...second));
     player.keys = u16(player.keys - 1); state.sounds.push(1);
-    player.doorsOpened = addBcd(player.doorsOpened, 1) & 0xffff; // +67 via DAA; the carry into +69 is overwritten later
+    // The carry lands in +69, the movement mask that this frame's move still uses (reset to 0x0F after it).
+    player.tally[6] = player.moveMask & 0xff; player.tally[7] = player.moveMask >> 8;
+    tallyIncrement(player.tally, TALLY.doors); player.moveMask = player.tally[6] | player.tally[7] << 8;
   }
 }
 
@@ -247,7 +268,7 @@ function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; 
 // Tileset id per level, byte table cs:4021 in the executable.
 export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 
-export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0 }) {
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
@@ -258,7 +279,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, emptyRecord), objectCount: 0,
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
-    rng: seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
+    rng: rng ? { ...rng } : seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
     generatorFlags: [false, false, false, false], generatorsDestroyed: 0, selfDestruct: false, seconds: 0, redAlert: false,
     endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 10, levelTenTimer: 0x0f, music: 'ingame',
   };
@@ -280,10 +301,10 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
   const start = find(0x35); // 1000:3BA6; the camera stays at 0 if there is no marker
   const camX = start.missing ? 0 : Math.max(0, s16(start.x - 0xa0)), camY = start.missing ? 0 : Math.max(0, s16(start.y - 0x58));
   state.camera = { x: camX, y: camY }; state.viewCamera = { ...state.camera };
-  const stats = saved || { energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, doorsOpened: 0 };
+  const stats = saved ? { ...saved, tally: Uint8Array.from(saved.tally) } : newGamePlayer();
   const player = {
     x: s16(camX + 0xb0), y: s16(camY + 0x68), frame: 0x0b, animBase: 0x0b, walk: 0, facing: 1, state: 1, height: 0,
-    ...stats, fireRepeat: 0, conveyor: 0, moveMask: 15, onIntex: 0, hurt: false, invulnerable: 0, cell: -1,
+    ...stats, fireRepeat: 0, conveyor: 0, onIntex: 0, hurt: false, invulnerable: 0, cell: -1,
   };
   player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
   if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
@@ -340,6 +361,37 @@ export function followCamera(state) {
   }
 }
 
+// The key checks at the top of each main-loop pass (1000:34E6), before the level-over tests: `scancode` is [B086],
+// the last INT 9 scancode. Returns 'abort' (the abort key ends the game like losing), 'consumed' (the caller clears
+// [B086]) or null. The cheat keys need cs:[7FD9] = 0xFF, which nothing sets in normal play; they are not modelled.
+export function mainLoopKeys(state, scancode, abortScancode) {
+  if ((scancode & 0xff) === abortScancode) return 'abort';
+  const cycle = [0x82, 0x8b].indexOf(scancode); // release of 1 (player 1) or 0 (player 2): next owned weapon
+  if (cycle >= 0) {
+    const player = state.players[cycle];
+    if (player) {
+      if (!(player.owned & 0xff)) { unsupported(state, 'Weapon cycle with no weapon owned (the original loops forever)'); return 'consumed'; }
+      let bit = (player.weapon - 1) & 7;
+      do bit = (bit + 1) & 7; while (!(player.owned & (1 << bit)));
+      player.weapon = bit + 1; state.sounds.push(5);
+    }
+    return 'consumed';
+  }
+  if (scancode === 0x32) { // M: the map screen (1000:33C6) for a player who bought the map
+    if (state.players.some(p => p.map & 1)) unsupported(state, 'Map screen');
+    return 'consumed';
+  }
+  return null;
+}
+
+// Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
+// (1000:21A6), restored by the next level's start (1000:1E15-1E6C). +69, the movement mask, is part of the save.
+export const newGamePlayer = () => ({ energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, tally: new Uint8Array(8), moveMask: 0 });
+export function savePlayer(player) {
+  const { energy, lives, keys, ammo, weapon, owned, credits, map, moveMask } = player;
+  return { energy, lives, keys, ammo, weapon, owned, credits, map, tally: Uint8Array.from(player.tally), moveMask };
+}
+
 // One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera
 // from before this frame's follow, sprites at the current camera, objects as updated in the previous frame.
 export function stepFrame(state, input, ticks = 0) {
@@ -392,11 +444,11 @@ function firePlayer(state, player) {
   if (s16(player.ammo) <= 0) { state.sounds.push(0x17); return; }
   player.ammo = u16(player.ammo - t.ammoCost[player.weapon]); if (s16(player.ammo) < 0) player.ammo = 0;
   state.sounds.push(t.fireSound[player.weapon - 1]); state.firing = true;
-  createShot(state, player.facing, player.weapon, player.x, player.y);
+  createShot(state, player, player.facing, player.weapon, player.x, player.y);
 }
 
 // 1000:5928. No free record: nothing happens.
-function createShot(state, facing, type, x, y) {
+function createShot(state, player, facing, type, x, y) {
   const shot = state.shots.find(s => !s.type); if (!shot) return;
   const t = state.tables, direction = facing & 15, [dx, dy] = t.shotOffset[direction];
   shot.x = dx === 0x4d2 ? x : s16(x + dx); shot.y = dx === 0x4d2 ? y : s16(y + dy);
@@ -408,6 +460,7 @@ function createShot(state, facing, type, x, y) {
     state.spreadCounter = (state.spreadCounter + 1) & 15;
   }
   if (type === 3) shot.counter = 4; else if (type === 7) shot.counter = 6; else if (type === 5) shot.counter = 0x18;
+  tallyIncrement(player.tally, TALLY.shots);
 }
 
 // 1000:5812: shots damage closed doors whose box contains (x, y + 0x18); the shot is not consumed.
@@ -548,7 +601,7 @@ function removeAlien(state, slot) {
 function hitAlien(state, slot, damage, player) {
   state.alienHit = true; slot.object.energy = s16(slot.object.energy - damage);
   if (slot.object.energy > 0) return false;
-  player.kills = addBcd(player.kills || 0, 1) & 0xffff; state.sounds.push(4);
+  tallyIncrement(player.tally, TALLY.kills); state.sounds.push(4);
   removeAlien(state, slot); return true;
 }
 

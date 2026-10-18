@@ -13,12 +13,19 @@ const check = (name, fn) => { fn(); results.push(name); console.log(`ok - ${name
 try {
   const page = await browser.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(url);
-  await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
-  await page.click('#play');
-  await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.state?.frame > 10, null, { timeout: 15000 });
+  const play = async query => {
+    await page.goto(url + query);
+    await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
+    await page.click('#play');
+    await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.state?.frame > 10, null, { timeout: 15000 });
+  };
+  await play('');
+  const newGame = await page.evaluate(() => ({ level: window.__alienBreed.level, players: window.__alienBreed.state.players.length }));
+  check('a new game starts at level index 1 (L0MZ), as 1000:17DE sets', () => assert.deepEqual(newGame, { level: 1, players: 1 }));
+  // The remaining checks use level index 2 (LBMZ), the attract demo's level, whose start is verified against the original.
+  await play('?level=2');
   const start = await page.evaluate(() => { const s = window.__alienBreed.state; return { x: s.players[0].x, y: s.players[0].y, frame: s.frame, cam: { ...s.camera } }; });
-  check('level 1 starts at the original spawn point', () => assert.deepEqual([start.x, start.y], [960, 784]));
+  check('level index 2 starts at the original spawn point', () => assert.deepEqual([start.x, start.y], [960, 784]));
 
   // About 25 frames: walking further right reaches an alien spawn at frame 47, which strict mode stops on until aliens exist.
   await page.keyboard.down('ArrowRight'); await page.waitForTimeout(350); await page.keyboard.up('ArrowRight');
@@ -36,11 +43,13 @@ try {
   check('the status panel is drawn from PANEL.VHF in the panel bank', () => assert.ok(panel.bank > 20 * 320 * 0.9, `panel-bank pixels ${panel.bank}`));
   check('the energy bar is full at the start', () => assert.ok(panel.energyRow.every(v => v >= 0xf0)));
 
-  const ammoBefore = await page.evaluate(() => window.__alienBreed.state.players[0].ammo);
+  const ammoBefore = await page.evaluate(() => window.__alienBreed.state.players[0].ammo), playedBefore = await page.evaluate(() => window.__alienBreed.effectsPlayed.length);
   await page.keyboard.down('KeyZ'); await page.waitForTimeout(40); await page.keyboard.up('KeyZ');
   await page.waitForTimeout(400);
   const afterShot = await page.evaluate(() => ({ ammo: window.__alienBreed.state.players[0].ammo, diagnostic: document.getElementById('diagnostic').hidden ? '' : document.getElementById('diagnostic').textContent }));
   check('pressing Z fires one round and the impact plays without a stop', () => { assert.equal(ammoBefore - afterShot.ammo, 1); assert.equal(afterShot.diagnostic, ''); });
+  const played = await page.evaluate(() => window.__alienBreed.effectsPlayed);
+  check('firing starts the weapon sample through Web Audio', () => assert.ok(played.length > playedBefore, `played ${JSON.stringify(played)}`));
 
   // The first spawn point (type 3, an egg) enters range after about 47 frames of walking right.
   await page.keyboard.down('ArrowRight'); await page.waitForTimeout(900); await page.keyboard.up('ArrowRight');
