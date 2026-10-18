@@ -6,11 +6,12 @@ import { buildGamePalette, dacToRgb, alienSheetName, redAlertPalette, levelStart
 import { createHud, drawHud, blitPanel } from './hud.js';
 import { createFramebuffer, drawMap, drawObjects, drawShots, toRgba, SCREEN_WIDTH } from './render.js';
 import { frameDescriptor, drawSprite } from './sprites.js';
-import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
+import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, mapRequested, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
 import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './screens.js';
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
 import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
 import { titleLoop, titleFiles } from './title.js';
+import { intexSession, mapSession, intexFiles, createIntexMemory } from './intex.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
 import { createOpl, OPL_RATE } from './opl2.js';
@@ -61,6 +62,9 @@ async function loadCommon(source) {
     demo: await source.read('DEMO.DAT'), options: { players: assets?.options?.players ?? 0, share: assets?.options?.share ?? 0 },
     songs: Object.fromEntries(await Promise.all(Object.keys(SONGS).map(async song => [song, await source.read(songFile(exe, song))]))),
   };
+  const intex = intexFiles(exe);
+  assets.computerPicture = await loadPicture(intex.computer); assets.mapPicture = await loadPicture(intex.map);
+  assets.weaponSheet = await sprites(intex.weapons); assets.intexMemory ??= createIntexMemory(exe);
   assets.titlePicture = await loadPicture(titleFiles(exe).title); assets.storyPicture = await loadPicture(titleFiles(exe).story);
   // The FM driver programs the PIT itself (fn 4, fn 6, fn 7), which sets the INT 8 rate.
   opl = createOpl();
@@ -136,6 +140,32 @@ function* program(devLevel) {
   }
 }
 let lastResult = null;
+
+// The Intex (1000:2588) or the M screen (33C6), then their common way back (28B3 / 3465): a frame end that sees all
+// the ticks since the last one (so a lag frame follows), two game frames on a black palette, the fade-in, and for
+// the Intex the in-game song from its beginning, whatever played before.
+function* terminal(state, player, kind) {
+  inGame = false;
+  const common = { exe: assets.exe, display, font: assets.font, text: assets.text, memory: assets.intexMemory, player, state,
+    input: () => keyboard.inputByte(), ticks: () => retrace.ticks, report: state.report };
+  if (kind === 'intex') {
+    yield* idle(intexSession({ ...common, pictures: { computer: assets.computerPicture }, weaponSheet: assets.weaponSheet, descriptor: assets.descriptor,
+      scancode: () => keyboard.lastScancode, consumeScancode: () => keyboard.consumeScancode(), sound: id => effects.play(id),
+      music: { start: song => music.start(song, assets.songs[song], { stopFirst: false }), stop: () => music.stop() } }), state);
+  } else yield* idle(mapSession({ ...common, picture: assets.mapPicture }), state);
+  intTicks(state); yield; // 3000:01B0
+  state.lag = !state.demoMode && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
+  inGame = true;
+  for (let i = 0; i < 2; i++) { // 37D6 twice
+    state.sounds = []; stepFrame(state, keyboard.inputByte(), retrace.ticks);
+    for (const id of state.sounds) effects.play(id);
+    renderGame(); yield;
+  }
+  inGame = false;
+  yield* idle(fadeIn(display, state.redAlert ? game.redDac : game.dac), state);
+  if (kind === 'intex') { music.start('ingame', assets.songs.ingame, { stopFirst: false }); state.music = 'ingame'; state.musicStop = false; } // 2402
+  state.countdownFrozen = false; inGame = true;
+}
 const DEMO_LEVEL = 2;
 
 function* gameSession(firstLevel, demo) {
@@ -169,6 +199,10 @@ function* gameSession(firstLevel, demo) {
       if (state.music !== music.song) { music.start(state.music, assets.songs[state.music], { stopFirst: state.musicStop }); state.musicStop = false; }
       if (state.alienPalette !== game.alienPalette) bossPalette(state);
       renderGame(); display.dac.set(state.redAlert ? game.redDac : game.dac);
+      if (state.intexRequest) { const player = state.intexRequest; state.intexRequest = null; yield* terminal(state, player, 'intex'); continue; } // 1000:35E0
+      const map = mapRequested(state, keyboard.lastScancode); // 1000:35F2
+      if (map.consumed) keyboard.consumeScancode();
+      if (map.player) { yield* terminal(state, map.player, 'map'); continue; }
       yield;
     }
     inGame = false;

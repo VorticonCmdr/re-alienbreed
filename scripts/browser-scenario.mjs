@@ -88,6 +88,23 @@ try {
   check('no strict stop so far', () => assert.equal(alien.diagnostic, ''));
   const musicState = await page.evaluate(() => ({ ...window.__alienBreed.music, reload: window.__alienBreed.timer.reload }));
   check('in-game music plays through the FM driver at the 120 Hz PIT rate', () => { assert.equal(musicState.song, 'ingame'); assert.ok(musicState.scheduled > 0); assert.equal(musicState.reload, 0x26d7); });
+  // An Intex terminal (cell 0x17): stand on it, press action; skip the boot text, go up to ABORT (the cursor starts on
+  // the first line), fire; the game resumes with the in-game song from its start.
+  await page.evaluate(() => {
+    const s = window.__alienBreed.state, cell = [...s.types].findIndex(t => (t & 0xff) === 0x17), p = s.players[0];
+    p.x = (cell % 120) * 16 + 24; p.y = Math.floor(cell / 120) * 16 + 24; p.invulnerable = 400;
+  });
+  const tap = async (key, hold = 80) => { await page.keyboard.down(key); await page.waitForTimeout(hold); await page.keyboard.up(key); await page.waitForTimeout(150); };
+  await page.waitForTimeout(200);
+  await tap('KeyX');
+  await page.waitForFunction(() => window.__alienBreed.music.song === 'intex', null, { timeout: 8000 });
+  const intex = await page.evaluate(() => window.__alienBreed.timer.reload);
+  check('the action key on a terminal opens the Intex with its song at 96 Hz', () => assert.equal(intex, 0x308c));
+  await page.waitForTimeout(1500); await tap('KeyZ'); await page.waitForTimeout(400); await tap('KeyZ'); await page.waitForTimeout(2500); // boot text, menu typing
+  await tap('ArrowUp'); await page.waitForTimeout(300); await tap('KeyZ');
+  await page.waitForFunction(() => window.__alienBreed.music.song === 'ingame', null, { timeout: 10000 });
+  const back = await page.evaluate(() => ({ frame: window.__alienBreed.state.frame, diagnostic: document.getElementById('diagnostic').hidden }));
+  check('leaving the Intex resumes the level with the in-game song', () => assert.ok(back.diagnostic, 'no diagnostic'));
   check('no uncaught page errors', () => assert.deepEqual(errors, []));
 } finally {
   await browser.close(); await server.close();

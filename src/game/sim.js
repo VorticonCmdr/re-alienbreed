@@ -188,7 +188,7 @@ export function updatePlayer(state, player, input) {
   openDoors(state, player);
   if (input & INPUT.FIRE) firePlayer(state, player);
   else player.fireRepeat = 0;
-  if (input & INPUT.ACTION && s16(player.onIntex) === -1) unsupported(state, 'Intex terminal');
+  if (input & INPUT.ACTION && s16(player.onIntex) === -1) { state.intexRequest = player; state.sounds.push(0); } // 1000:5BD6
   const direction = input & 15, base = state.tables.animBase[direction];
   if (base !== 0xffff) { player.animBase = base; player.facing = direction; }
   if (player.hurt) { player.hurt = false; player.frame = player.animBase + 4; }
@@ -276,7 +276,7 @@ export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
-    camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
+    camera: { x: 0, y: 0 }, lag: 0, frameTicks: 0, loadingFile: false, countdownFrozen: false, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
     animations: Array(79).fill(null), doors: [], sounds: [], diagnostics: [], playerCount: 1, shareCredits: false,
     wallsDestroyed: 0, bossActive: false, aliensSuppressed: false, bossDying: false, alienPalette: null, alienSheet: null, frameBanks: {}, musicStop: false, selfDestruct: false, objectiveTriggered: false,
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
@@ -370,7 +370,8 @@ export function followCamera(state) {
   }
 }
 
-// The key checks at the top of each main-loop pass (1000:34E6), before the level-over tests: `scancode` is [B086],
+// The key checks at the top of each main-loop pass (1000:34E6), before the level-over tests (M is checked after the
+// frame, see mapRequested): `scancode` is [B086],
 // the last INT 9 scancode. Returns 'abort' (the abort key ends the game like losing), 'consumed' (the caller clears
 // [B086]) or null. The cheat keys need cs:[7FD9] = 0xFF, which nothing sets in normal play; they are not modelled.
 export function mainLoopKeys(state, scancode, abortScancode) {
@@ -386,18 +387,20 @@ export function mainLoopKeys(state, scancode, abortScancode) {
     }
     return 'consumed';
   }
-  if (scancode === 0x32) { // M: the map screen (1000:33C6) for a player who bought the map
-    if (state.players.some(p => p.map & 1)) unsupported(state, 'Map screen');
-    return 'consumed';
-  }
   return null;
 }
 
 // Variables the level load never resets (static audit of 1000:1937-1FC1): the RNG [B0BA]-[B0BE], the frame counter
 // [AF84], cs:4035/4037 (reset only by some decor in 3D10), [8182], cs:5A43, cs:5671, cs:5119, the INT 8 work [AD4C]
 // and cs:7969, and the level 16/17 spawn timer cs:602A.
-const CARRIED = ['aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer', 'scriptedSpawn'];
+const CARRIED = ['frameTicks', 'lag', 'aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer', 'scriptedSpawn'];
 export const carriedGlobals = state => Object.fromEntries(CARRIED.map(k => [k, k === 'rng' ? { ...state.rng } : state[k]]));
+
+// 1000:35F2: M (make code 0x32) after the frame, without the end sequence, for a player who owns the map.
+export function mapRequested(state, scancode) {
+  if (scancode !== 0x32) return { consumed: false, player: null };
+  return { consumed: true, player: state.endSequence ? null : state.players.find(p => p.alive && p.map & 1) ?? null };
+}
 
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
 // (1000:21A6), restored by the next level's start (1000:1E15-1E6C). +69, the movement mask, is part of the save.
@@ -430,7 +433,9 @@ export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
     shots: state.shots.filter(s => s.type).map(s => ({ type: s.type, x: s.x, y: s.y, direction: s.direction, counter: s.counter })),
   };
   state.shotPhase = (state.frameCounter >> 2) & 1; // cs:578C refreshed after 52F4 for the next frame's type-6 shots
-  state.atFlip = { objectCount: state.objectCount }; // what the original holds at its frame flip (for comparisons)
+  state.atFlip = { objectCount: state.objectCount, rng: { ...state.rng } }; // what the original holds at its frame flip (for comparisons)
+  // 2EF5:12B4: the frame end takes the INT 8 count since the previous one; 5 or more makes this a lag frame.
+  state.lag = !state.demoMode && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; startBoss(state); } // 1000:38C6
   // 1000:3928: the demo's 1024th input byte ends the main loop before the player update (POP AX / RET at 39BC).
@@ -571,11 +576,13 @@ export function startSelfDestruct(state) {
 }
 // The INT 8 handler's once-per-"second" work (1000:7872, carry of [AD4C] += 0x334). Ticks are an explicit input.
 export function timerTick(state) {
+  state.frameTicks = (state.frameTicks + 1) & 0xffff; // [8184]
+  if (state.loadingFile) return; // [7B4A]: the file loaders pause the rest
   state.tickAccumulator += 0x334;
   if (state.tickAccumulator <= 0xffff) return;
   state.tickAccumulator &= 0xffff;
   state.secondCycle--; if (state.secondCycle < 0) state.secondCycle = 10;
-  if (state.selfDestruct) {
+  if (state.selfDestruct && !state.countdownFrozen) { // cs:37D3 freezes it in the Intex
     if (state.secondCycle === 0) state.sounds.push(0x0b);
     state.sounds.push(0x16);
     state.seconds = bcdDecrement(state.seconds);

@@ -71,9 +71,10 @@ test('touching cell 0x15 starts the self-destruct with the level\'s BCD seconds 
   updatePlayer(state, player, 0);
   assert.equal(state.selfDestruct, true); assert.equal(state.seconds, 0x60); assert.equal(state.redAlert, true);
 });
-test('unimplemented behaviour stops strict runs with a diagnostic', () => {
+test('action on an Intex terminal (+40 = 0xFFFF from the previous probes) requests the session with sound 0', () => {
   const { state, player } = fixture(); player.onIntex = 0xffff;
-  assert.throws(() => updatePlayer(state, player, INPUT.ACTION), /Intex terminal/);
+  updatePlayer(state, player, INPUT.ACTION);
+  assert.equal(state.intexRequest, player); assert.deepEqual(state.sounds, [0]);
 });
 test('firing spends ammo, plays the weapon sound, creates a shot at the facing offset and respects the fire-rate mask', () => {
   const { state, player } = fixture();
@@ -122,7 +123,11 @@ test('1000:34E6 keys: releasing 1 cycles to the next owned weapon with sound 5; 
   player.owned = 0x05; player.weapon = 1; mainLoopKeys(state, 0x82, 0x01); assert.equal(player.weapon, 3);
   assert.equal(mainLoopKeys(state, 0x02, 0x01), null, 'the press itself does nothing');
   assert.equal(mainLoopKeys(state, 0x01, 0x01), 'abort'); assert.equal(mainLoopKeys(state, 0x8b, 0x01), 'consumed', 'player 2 key without player 2');
-  assert.equal(mainLoopKeys(state, 0x32, 0x01), 'consumed', 'M without the map does nothing');
+  const { mapRequested } = await import('../src/game/sim.js');
+  assert.equal(mainLoopKeys(state, 0x32, 0x01), null, 'M is checked after the frame');
+  state.endSequence = 0; player.alive = true;
+  assert.deepEqual(mapRequested(state, 0x32), { consumed: true, player: null }, 'M without the map does nothing');
+  player.map = 1; assert.equal(mapRequested(state, 0x32).player, player);
 });
 test('the player save (1000:21A6) carries stats, tallies and the movement mask; a new game starts with mask 0', async () => {
   const { savePlayer, newGamePlayer } = await import('../src/game/sim.js');

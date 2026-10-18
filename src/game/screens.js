@@ -53,9 +53,11 @@ function glyphFor(code) {
 // cs:1122, y cs:111B, colour cs:1121, line height cs:1124, opaque font cs:1126, space width cs:2E8C.
 export const createTextState = () => ({ x: 0, lineX: 0, y: 0, colour: 0, lineHeight: 0, opaque: 0, space: 0 });
 
-// 1000:13B2 without the typewriter effect (cs:13B0 = 0): `read(offset)` returns the byte at DS:offset. Glyphs are
-// drawn into a 336-pixel page whose first 320 columns are displayed. `report` receives unsupported cases.
-export function drawText(frame, font, text, read, offset, report) {
+// 1000:13B2: `read(offset)` returns the text byte. Glyphs go into a 336-pixel page whose first 320 columns are shown.
+// With `typewriter` ({ other page, flip(), sound(), input(), state }) every non-space glyph is also drawn on the
+// other page, followed by a flip and sound 0x18; a fire release since the previous sample (cs:1517) ends the effect
+// (cs:13B0 = 0). The generator yields once per flip; `drawText` runs it without a typewriter.
+export function* textSteps(frame, font, text, read, offset, report, typewriter = null) {
   const word = o => read(o) | read(o + 1) << 8;
   text.x = text.lineX = word(offset); text.y = word(offset + 2);
   for (let p = offset + 4; ;) {
@@ -64,20 +66,32 @@ export function drawText(frame, font, text, read, offset, report) {
     if (code === 0xfe) { text.colour = read(p++); continue; }
     if (code === 0xfd) { text.space = read(p++); continue; }
     if (code === 0x00) { text.x = text.lineX; text.y = (text.y + text.lineHeight) & 0xffff; continue; }
-    let glyph = glyphFor(code);
+    let glyph = glyphFor(code), space = false;
     if (code === 0x20) {
+      space = true;
       if (!text.opaque) { text.x = (text.x + (text.space || 9)) & 0xffff; continue; }
       glyph = 0x2a;
     }
     if (glyph === null) { report(`Text character 0x${code.toString(16)} outside the font`); text.x = (text.x + 9) & 0xffff; continue; }
     if (text.x + 8 > PAGE_WIDTH || text.y + 11 > SCREEN_HEIGHT) report(`Text drawn outside the page at (${text.x}, ${text.y})`);
-    for (let row = 0; row < 11; row++) for (let column = 0; column < 8; column++) {
-      const x = text.x + column, y = text.y + row, pixel = font[glyph * GLYPH + row * 8 + column];
-      if (x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT) continue;
-      if (pixel) frame[y * SCREEN_WIDTH + x] = text.colour; else if (text.opaque) frame[y * SCREEN_WIDTH + x] = 0;
+    drawGlyph(typewriter ? typewriter.current() : frame, font, text, glyph); // [B014] changes with every flip
+    if (typewriter && typewriter.state.on && !space) {
+      drawGlyph(typewriter.other(), font, text, glyph);
+      yield* typewriter.flip(); typewriter.sound(0x18);
+      const now = typewriter.input();
+      if (typewriter.state.previous & 0x10 && !(now & 0x10)) typewriter.state.on = false;
+      typewriter.state.previous = now;
     }
     text.x = (text.x + 9) & 0xffff;
   }
 }
+function drawGlyph(frame, font, text, glyph) {
+  for (let row = 0; row < 11; row++) for (let column = 0; column < 8; column++) {
+    const x = text.x + column, y = text.y + row, pixel = font[glyph * GLYPH + row * 8 + column];
+    if (x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT) continue;
+    if (pixel) frame[y * SCREEN_WIDTH + x] = text.colour; else if (text.opaque) frame[y * SCREEN_WIDTH + x] = 0;
+  }
+}
+export function drawText(frame, font, text, read, offset, report) { for (const _ of textSteps(frame, font, text, read, offset, report)); }
 
 export const DATA_SEGMENT = DS;
