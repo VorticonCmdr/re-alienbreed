@@ -140,7 +140,7 @@ function hurt(state, player, amount) { player.hurt = true; player.energy = u16(p
 // 1000:6286: the exit only counts on some levels or once the self-destruct or boss has started.
 function exitTouched(state) {
   const l = state.level;
-  if ([1, 11, 15, 16, 4, 7, 9, 10].includes(l) || (l === 3 && state.lasersHit >= 3) || state.bossActive || state.selfDestruct) state.exitTaken = true;
+  if ([1, 11, 15, 16, 4, 7, 9, 10].includes(l) || (l === 3 && ((state.wallsDestroyed << 24) >> 24) >= 3) || state.bossActive || state.selfDestruct) state.exitTaken = true;
 }
 
 function unsupported(state, message) {
@@ -268,14 +268,15 @@ function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; 
 // Tileset id per level, byte table cs:4021 in the executable.
 export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 
-export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng }) {
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
     animations: Array(79).fill(null), doors: [], sounds: [], diagnostics: [], playerCount: 1, shareCredits: false,
-    lasersHit: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
+    wallsDestroyed: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
     spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
+    bounceCounter: 0, // cs:5671, likewise
     objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, emptyRecord), objectCount: 0,
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
@@ -284,6 +285,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 10, levelTenTimer: 0x0f, music: 'ingame',
   };
   state.report = message => unsupported(state, message);
+  if (globals) Object.assign(state, globals, { rng: { ...globals.rng } }); // before 3D10, which may reset the timers
   // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
   const codeAt = (x, y) => {
     if (y - 16 < 0) { unsupported(state, `Level-start probe above the map at (${x}, ${y})`); return -1; }
@@ -383,6 +385,12 @@ export function mainLoopKeys(state, scancode, abortScancode) {
   }
   return null;
 }
+
+// Variables the level load never resets (static audit of 1000:1937-1FC1): the RNG [B0BA]-[B0BE], the frame counter
+// [AF84], cs:4035/4037 (reset only by some decor in 3D10), [8182], cs:5A43, cs:5671, cs:5119, the INT 8 work [AD4C]
+// and cs:7969, and the level 16/17 spawn timer cs:602A.
+const CARRIED = ['rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer'];
+export const carriedGlobals = state => Object.fromEntries(CARRIED.map(k => [k, k === 'rng' ? { ...state.rng } : state[k]]));
 
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
 // (1000:21A6), restored by the next level's start (1000:1E15-1E6C). +69, the movement mask, is part of the save.
@@ -493,12 +501,39 @@ export function updateShots(state) {
     if (WALLS.has(code)) {
       if (code >= 0x2a && code <= 0x2d) hitGenerator(state, code - 0x2a);
       if (s16(state.generatorsDestroyed) >= 4) startSelfDestruct(state);
-      if (shot.type === 3 || shot.type === 7) unsupported(state, 'Bouncing shot');
+      if ((shot.type === 3 || shot.type === 7) && bounce(state, shot, oldX, oldY)) continue;
       shot.type = 0; createEffect(state, 5, shot.x, s16(shot.y + 8));
       continue;
     }
-    if (code === 0x12 || code === 0x13) unsupported(state, 'Destructible wall hit');
+    if (code === 0x12 || code === 0x13) destroyWall(state, shot.x, s16(shot.y + 0x10), code === 0x12 ? 0x20 : -0x20);
   }
+}
+
+// 1000:5445: sound 0x15, one bounce fewer; with bounces left the shot steps back and takes a random new direction
+// from cs:5672, indexed by the RNG's low byte plus the rolling counter cs:[5671], never its current one. No spread.
+function bounce(state, shot, oldX, oldY) {
+  state.sounds.push(0x15);
+  shot.counter = (shot.counter - 1) & 0xffff; if (shot.counter === 0) return false;
+  shot.x = oldX; shot.y = oldY;
+  let direction;
+  do {
+    state.bounceCounter = (state.bounceCounter + 1) & 15;
+    direction = state.tables.bounceDirection[((random(state) & 0xff) + state.bounceCounter) & 15];
+  } while ((shot.direction & 0xff) === direction);
+  shot.direction = (shot.direction & 0xff00) | direction;
+  const t = state.tables;
+  [shot.vx, shot.vy] = velocity(direction, t.moveSteps[state.lag * 16 + t.shotSpeed[shot.type - 1]]);
+  return true;
+}
+
+// 1000:5502 (0x12, debris to the right) and 5579 (0x13, to the left): the cell becomes floor, three cells one column
+// over become burning debris 0x45 for 16 frames ([8182]); the third wall on level index 3 starts the self-destruct.
+function destroyWall(state, x, y, dx) {
+  state.wallsDestroyed = (state.wallsDestroyed + 1) & 0xff; state.burning = 0x10;
+  writeType(state, x, y, 0); startAnimation(state, 0x8ba8, worldCell(state, x, y));
+  for (const dy of [0, 0x10, 0x20]) { writeType(state, x + dx, y + dy, 0x45); startAnimation(state, 0x8bae, worldCell(state, x + dx, y + dy)); }
+  state.sounds.push(1);
+  if (state.level === 3 && ((state.wallsDestroyed << 24) >> 24) >= 3) startSelfDestruct(state);
 }
 
 // 1000:5286 through the shot wall handler: flag, count, 2x2 destroyed tiles, explosion object type 9, sound 0x0E.
@@ -517,7 +552,7 @@ export function startSelfDestruct(state) {
   state.selfDestruct = true; state.seconds = state.tables.selfDestructSeconds[state.level]; state.music = 'alarmed';
 }
 // The INT 8 handler's once-per-"second" work (1000:7872, carry of [AD4C] += 0x334). Ticks are an explicit input.
-function timerTick(state) {
+export function timerTick(state) {
   state.tickAccumulator += 0x334;
   if (state.tickAccumulator <= 0xffff) return;
   state.tickAccumulator &= 0xffff;

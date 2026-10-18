@@ -28,3 +28,10 @@ export function redAlertPalette(palette) {
 }
 
 export const dacToRgb = palette => Uint8Array.from(palette, v => Math.round((v & 63) * 255 / 63));
+
+// Levels 14 and 15 start with the self-destruct transform already applied in place, then entries 0xC4-0xC5 from
+// 2041:97DE (1000:1F93-1FB4). A later self-destruct applies 5F60 again to this palette.
+export function levelStartPalette(exe, palette, level) {
+  if (level !== 14 && level !== 15) return palette;
+  const result = redAlertPalette(palette); result.set(exe.bytes(DATA_SEGMENT, 0x97de, 6), 0xc4 * 3); return result;
+}

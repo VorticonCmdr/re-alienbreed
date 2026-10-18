@@ -19,7 +19,22 @@ try {
     await page.click('#play');
     await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.state?.frame > 10, null, { timeout: 15000 });
   };
-  await play('');
+  // A new game opens with the intermission (CARGOBAY and the level 1 briefing); fire skips each page.
+  await page.goto(url);
+  await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
+  await page.click('#play');
+  await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.display.dac.some(v => v), null, { timeout: 15000 });
+  const textPixels = () => window.__alienBreed.display.frame.filter(v => v === 0xfd).length;
+  const before = await page.evaluate(textPixels);
+  await page.waitForTimeout(1500); // the 64-step fade, then the briefing is drawn every frame
+  const briefing = await page.evaluate(() => ({ level: window.__alienBreed.level, lit: window.__alienBreed.display.frame.filter(v => v === 0xfd).length }));
+  await page.screenshot({ path: '.work/browser-intermission.png' }).catch(() => {});
+  check('a new game shows the intermission briefing before level index 1', () => { assert.equal(briefing.level, undefined); assert.ok(briefing.lit > before + 1000, `text pixels ${before} -> ${briefing.lit}`); });
+  for (let i = 0; i < 40 && !(await page.evaluate(() => window.__alienBreed.state?.frame > 10)); i++) {
+    await page.keyboard.down('KeyZ'); await page.waitForTimeout(60); await page.keyboard.up('KeyZ'); await page.waitForTimeout(250);
+  }
+  const text = await page.evaluate(() => window.__alienBreed.display.frame.length);
+  check('fire skips the intermission into the level', () => assert.ok(text > 0));
   const newGame = await page.evaluate(() => ({ level: window.__alienBreed.level, players: window.__alienBreed.state.players.length }));
   check('a new game starts at level index 1 (L0MZ), as 1000:17DE sets', () => assert.deepEqual(newGame, { level: 1, players: 1 }));
   // The remaining checks use level index 2 (LBMZ), the attract demo's level, whose start is verified against the original.
