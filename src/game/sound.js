@@ -32,6 +32,11 @@ export function createEffectPlayer(context, destination, buffers, priorities) {
       node.onended = () => { if (source === node) source = null; };
       node.start(); source = node; if (this.played.push(id) > 64) this.played.shift();
     },
+    // Started directly through the voice driver (function 6), as the game-over screen does: the stored priority stays.
+    playBuffer(buffer) {
+      this.stop(); const node = context.createBufferSource(); node.buffer = buffer; node.connect(destination);
+      node.onended = () => { if (source === node) source = null; }; node.start(); source = node;
+    },
     stop() { if (source) { source.onended = null; source.stop(); source = null; } },
   };
 }

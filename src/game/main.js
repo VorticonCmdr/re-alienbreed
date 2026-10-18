@@ -9,6 +9,7 @@ import { frameDescriptor, drawSprite } from './sprites.js';
 import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
 import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './screens.js';
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
+import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
 import { createOpl, OPL_RATE } from './opl2.js';
@@ -55,6 +56,7 @@ async function loadCommon(source) {
     deckman: await sprites(deckmanSheetName(exe)),
     // Boss sheets (records 2041:93FA, 93E6, 940E; the file name follows each 8-byte record), swapped in by 1000:6030.
     bossSheets: Object.fromEntries(await Promise.all([0x93fa, 0x93e6, 0x940e].map(async record => [record, await sprites(exe.string(0x2041, record + 8))]))),
+    gameOverSample: await (async () => { const { samples, sampleRate } = decodeVoc(await source.read(gameOverFiles(exe).sample)); const b = audio.createBuffer(1, samples.length, sampleRate); b.copyToChannel(samples, 0); return b; })(),
     songs: Object.fromEntries(await Promise.all(Object.keys(SONGS).map(async song => [song, await source.read(songFile(exe, song))]))),
   };
   // The FM driver programs the PIT itself (fn 4, fn 6, fn 7), which sets the INT 8 rate.
@@ -150,11 +152,22 @@ function* gameSession(firstLevel) {
     inGame = false;
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
-    if (result !== 'complete') return result === 'aborted' ? 'Game abandoned.' : 'Game over.'; // 4109 game-over picture not reproduced yet
-    if (level === 18) return 'All levels complete. The ending sequence (1000:41A2) is not reproduced yet.';
-    if (level === 0) return 'Level index 0 was completed; what follows (1000:44EC) is not reproduced.';
-    carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
-    level++;
+    if (result === 'complete' && level !== 0 && level !== 18) {
+      carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
+      level++; continue;
+    }
+    const input = () => keyboard.inputByte();
+    if (result === 'complete' && level === 18) { // 1000:41A2
+      const pictures = []; for (const name of endingPictures(assets.exe)) pictures.push(yield loadPicture(name));
+      yield* idle(ending({ exe: assets.exe, display, font: assets.font, text: assets.text, pictures, input, report: state.report }), state);
+    } else if (result === 'complete') { // index 0: 1000:44EC with the exit taken shows text page 0x13
+      const picture = yield loadPicture(intermissionPicture(assets.exe, 0));
+      yield* idle(intermission(0, { exe: assets.exe, display, font: assets.font, text: assets.text, picture, deckman: assets.deckman, tables: assets.tables,
+        descriptor: assets.descriptor, input, report: state.report, exitTaken: true }), state);
+    }
+    const picture = yield loadPicture(gameOverFiles(assets.exe).picture); // 1000:4109, then the title (not reproduced)
+    yield* idle(gameOver({ display, picture, input, playSample: () => effects.playBuffer(assets.gameOverSample) }), state);
+    return result === 'aborted' ? 'Game abandoned.' : result === 'complete' ? 'Game complete.' : 'Game over.';
   }
 }
 const strictReport = message => { if (!$('preview').checked) throw new UnsupportedPath(message, {}); };
