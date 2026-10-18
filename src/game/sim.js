@@ -409,7 +409,7 @@ export function savePlayer(player) {
 
 // One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera
 // from before this frame's follow, sprites at the current camera, objects as updated in the previous frame.
-export function stepFrame(state, input, ticks = 0) {
+export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
   if (state.levelOver) throw new Error('stepFrame after the level ended');
   state.sounds = [];
   for (let i = 0; i < ticks; i++) timerTick(state); // INT 8 work, applied at the frame start (its exact phase is approximate)
@@ -433,6 +433,8 @@ export function stepFrame(state, input, ticks = 0) {
   state.atFlip = { objectCount: state.objectCount }; // what the original holds at its frame flip (for comparisons)
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
   if (state.objectiveTriggered) { state.objectiveTriggered = false; startBoss(state); } // 1000:38C6
+  // 1000:3928: the demo's 1024th input byte ends the main loop before the player update (POP AX / RET at 39BC).
+  if (demoEnd) { state.frame++; state.levelOver = 'demo'; return; }
   if (!state.endSequence) for (const player of state.players) if (player.alive) updatePlayer(state, player, input);
   for (const player of state.players) if (player.alive && s16(player.energy) <= 0) killPlayer(state, player);
   if (!state.endSequence) updateAliens(state);

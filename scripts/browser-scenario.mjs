@@ -24,6 +24,12 @@ try {
   await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
   await page.click('#play');
   await page.waitForFunction(() => window.__alienBreed?.running && window.__alienBreed.display.dac.some(v => v), null, { timeout: 15000 });
+  await page.waitForTimeout(1200); // the title's 64-step fade
+  const title = await page.evaluate(() => ({ ...window.__alienBreed.music, reload: window.__alienBreed.timer.reload, state: !!window.__alienBreed.state }));
+  check('start-up shows the title with the title song at 96 Hz', () => { assert.equal(title.song, 'title'); assert.equal(title.reload, 0x308c); assert.equal(title.state, false); });
+  await page.keyboard.down('KeyZ'); await page.waitForTimeout(80); await page.keyboard.up('KeyZ'); // fire on START GAME (the default line)
+  await page.waitForFunction(() => window.__alienBreed.music.song !== 'title', null, { timeout: 5000 });
+  await page.waitForFunction(() => window.__alienBreed.display.dac.some(v => v), null, { timeout: 15000 });
   const textPixels = () => window.__alienBreed.display.frame.filter(v => v === 0xfd).length;
   const before = await page.evaluate(textPixels);
   await page.waitForTimeout(1500); // the 64-step fade, then the briefing is drawn every frame
