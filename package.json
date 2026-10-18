@@ -10,7 +10,8 @@
     "preview": "vite preview --open /viewer.html",
     "test": "node --test",
     "verify": "node scripts/verify.mjs",
-    "verify:runtime": "node scripts/runtime-checks.mjs"
+    "verify:runtime": "node scripts/runtime-checks.mjs",
+    "verify:editor": "node scripts/editor-checks.mjs"
   },
   "engines": {
     "node": "^22.12.0 || >=24.0.0"

@@ -22,6 +22,18 @@ npm run preview
 
 `npm test` runs decoder tests and, when `game/` is present, checks all 135 supplied files and 50 independently decoded LZHUF hashes. The two original-collection checks are skipped in a checkout without game data. If using another edition or modified data, adjust those reference checks to that collection.
 
+## Level workshop
+
+Open [level.html](http://127.0.0.1:5173/level.html) to edit the 19 original maps with their actual tilesets. The editor discovers `game/` during development, or accepts a local game-folder selection in a production build. Original files are never modified.
+
+- Paint, rectangle, connected fill, eyedropper, pan, zoom, grid, cell-type overlay, and click-to-navigate minimap.
+- Edit artwork, cell types, or both; artwork-only is the default to preserve existing behavior.
+- Undo/redo, per-level browser-local drafts, tile search, and a filter for tiles used in the current map.
+- Export/import `.abmap` JSON files with validated dimensions and value ranges. Unknown bit 9 and trailing bytes survive a round trip. The shortcut dialog also offers decompressed `.raw` output; this is **not** a compressed DOS `.HUF` replacement.
+- **Playtest level** opens the browser game with the edited map. Press Play (or select your game folder again in a production build). Existing simulation limitations and original level scripts still apply; this editor does not edit scripts or executable tables.
+
+Press **?** for shortcuts. Browser drafts depend on the current origin and browser storage; export a map to keep a portable copy. Run `npm run verify:editor` for original-map round-trip and Chrome browser checks (requires `game/` and Chrome).
+
 ## Viewer coverage
 
 | Assets | Preview |

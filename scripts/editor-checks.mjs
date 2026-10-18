@@ -1,0 +1,38 @@
+import { createServer } from 'vite';
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { openExe } from '../src/game/exe.js';
+import { levelMapNames } from '../src/game/level.js';
+import { decompressLzhuf } from '../src/lzhuf.js';
+import { unpack, pack } from '../src/editor/model.js';
+const root=new URL('../',import.meta.url),read=async name=>new Uint8Array(await readFile(new URL('game/'+name,root)));
+const exe=await openExe(await read('ALIEN.EXE')), names=levelMapNames(exe);
+for(let i=0;i<names.length;i++){const bytes=decompressLzhuf(await read(names[i]));assert.deepEqual(pack(unpack(bytes,i)),bytes);}console.log('ok - all 19 original maps round-trip byte for byte');
+const server=await createServer({configFile:new URL('../vite.config.js',import.meta.url).pathname,server:{port:0,open:false},logLevel:'error'});await server.listen();
+const browser=await chromium.launch({channel:'chrome',headless:true});
+try {
+const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));const url=server.resolvedUrls.local[0];
+await page.goto(url+'level.html');await page.waitForFunction(()=>document.querySelector('#empty').hidden);assert.equal(await page.locator('.tile').count(),512);
+const point=await page.locator('#map').boundingBox(), x=point.x+point.width/2,y=point.y+point.height/2;
+await page.locator('[data-tile="1"]').click();await page.mouse.click(x,y);await page.waitForFunction(()=>document.querySelector('#changes').textContent==='1');
+await page.locator('#undo').click();assert.equal(await page.locator('#changes').textContent(),'0');await page.locator('#redo').click();assert.equal(await page.locator('#changes').textContent(),'1');
+await page.waitForFunction(()=>document.querySelector('#save-state').textContent.includes('saved'));const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('alien-breed-editor:v1:1')));
+const original=unpack(decompressLzhuf(await read(names[1])),1);assert.deepEqual(saved.types,original.types);console.log('ok - paint preserves cell types; undo/redo and draft saving');
+await page.reload();await page.waitForFunction(()=>document.querySelector('#save-state').textContent==='Local draft restored');assert.equal(await page.locator('#changes').textContent(),'1');
+await page.locator('#layer').selectOption('types');await page.locator('#cell-type').selectOption('4');await page.mouse.click(x,y);await page.waitForFunction(()=>JSON.parse(localStorage.getItem('alien-breed-editor:v1:1')).types.includes(4));
+await page.locator('#layer').selectOption('both');await page.locator('[data-tool="rectangle"]').click();await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+45,y+40);await page.mouse.up();assert.ok(Number((await page.locator('#changes').textContent()).replaceAll(',',''))>10);
+await page.locator('#undo').click();await page.locator('#redo').click();
+const downloadPromise=page.waitForEvent('download');await page.locator('#export').click();const download=await downloadPromise;const exported=JSON.parse(await readFile(await download.path(),'utf8'));assert.equal(exported.format,'alien-breed-map-v1');
+await page.locator('#map-input').setInputFiles({name:'roundtrip.abmap',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(exported))});await page.locator('#confirm').click();await page.waitForFunction(()=>document.querySelector('#toast').textContent==='Map imported. Ready to edit.');
+assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('alien-breed-editor:v1:1'))),exported);console.log('ok - rectangle, cell-type editing, JSON export/import and reload recovery');
+await page.locator('#reset').click();await page.locator('#confirm').click();assert.equal(await page.locator('#changes').textContent(),'0');await page.locator('#undo').click();
+await page.locator('#layer').selectOption('tiles');await page.locator('[data-tile="2"]').click();await page.locator('[data-tool="fill"]').click();await page.mouse.click(x,y);await page.locator('#undo').click();
+await page.locator('[data-tool="pick"]').click();await page.mouse.click(x,y);assert.equal(await page.locator('#brush-title').textContent(),`Tile ${String(exported.tiles[48*120+60]).padStart(3,'0')}`);
+console.log('ok - restore original is undoable; fill and eyedropper work');
+const popupPromise=page.waitForEvent('popup');await page.locator('#playtest').click();const popup=await popupPromise;await popup.waitForLoadState();assert.deepEqual(await popup.evaluate(()=>JSON.parse(sessionStorage.getItem('alien-breed-playtest'))),exported);await popup.locator('#play').click();await popup.waitForFunction(()=>window.__alienBreed?.state,null,{timeout:20000});assert.equal(await popup.evaluate(()=>window.__alienBreed.level),1);await popup.close();console.log('ok - playtest transfers the map and starts level 1');
+for(let i=0;i<19;i++){await page.locator('#level').selectOption(String(i));await page.waitForFunction(n=>document.querySelector('#level').value===String(n)&&!document.querySelector('#level').disabled,i);assert.equal(await page.locator('.tile').count(),512);}console.log('ok - all 19 maps and tilesets load');
+await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:'/tmp/alien-editor-mobile.png'});
+await page.setViewportSize({width:1440,height:1000});await page.locator('#level').selectOption('1');await page.waitForFunction(()=>!document.querySelector('#level').disabled);await page.screenshot({path:'/tmp/alien-editor-final.png'});
+assert.deepEqual(errors,[]);console.log('ok - narrow viewport fits; no browser errors');
+} finally {await browser.close();await server.close();}

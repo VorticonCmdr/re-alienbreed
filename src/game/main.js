@@ -1,4 +1,5 @@
 // Browser adapter: asset loading, keyboard, fixed-step timing and canvas output. The simulation lives in sim.js.
+import { validate as validateEditorMap, pack as packEditorMap } from '../editor/model.js';
 import { assetSource, entriesFromFileList } from './assets.js';
 import { openExe } from './exe.js';
 import { decodeMap, buildTileStore, levelMapNames, levelTileSheetNames } from './level.js';
@@ -83,7 +84,13 @@ async function loadCommon(source) {
 async function loadLevel(level, carried, demoMode = 0) {
   const { source, exe, tables } = assets;
   const sheetBytes = await Promise.all(levelTileSheetNames(exe, level).map(name => source.read(name)));
-  const map = decodeMap(decompressLzhuf(await source.read(assets.mapNames[level])));
+  let map = decodeMap(decompressLzhuf(await source.read(assets.mapNames[level])));
+  if (new URLSearchParams(location.search).get('editor') === '1') {
+    const saved = sessionStorage.getItem('alien-breed-playtest');
+    if (!saved) throw new Error('Editor playtest data is missing. Open playtest again from level.html.');
+    const custom = validateEditorMap(JSON.parse(saved));
+    if (custom.level === level) map = decodeMap(packEditorMap(custom));
+  }
   const tileStore = buildTileStore(sheetBytes.map(bytes => decodeVga(bytes)));
   const dac = levelStartPalette(exe, buildGamePalette(exe, sheetBytes[1], level), level), redDac = redAlertPalette(dac);
   // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
