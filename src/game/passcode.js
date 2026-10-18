@@ -15,7 +15,7 @@ export function passcodePrompt(exe, entry) {
   return text;
 }
 
-// `context`: { exe, show(text), pick() (the entry number: the game's RNG low byte [B038], here any random byte),
+// `context`: { exe, show(text), pick() (one step of the game's RNG, seeded from the clock at start-up: [B038]),
 // takeChar() (the next typed character or null), log(entry) }. One yield per retrace. Returns true when the code
 // matches; after the third wrong code the original jumps to the program exit (7B0F) and this returns false.
 export function* passcode(context) {

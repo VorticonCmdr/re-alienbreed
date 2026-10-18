@@ -48,7 +48,7 @@ in-level items; screens need breakpoints on their retrace waits instead.
 | Text-mode exit screen | The exit message in a plain text block | The original switches to 80×25 text mode and prints it with DOS |
 | Saving the recorded demo | Offered as a `DEMO.DAT` download; the attract demo plays it for the rest of the session | The original writes `demo.dat` into the game directory, so it also plays after a restart |
 | Panel reloads after a boss starts or dies (`209E`, `A316`, `A31A`) | Not reproduced | The panel is redrawn every frame anyway |
-| Start-up code check | Off by default (as in `ALIEN.EXE`); the page option runs the unpatched check with a randomly picked entry, shown as plain text | The original picks the entry with its RNG, whose early seeding is not established, and prints in 80×25 text mode |
+| Start-up code check | Off by default (as in `ALIEN.EXE`); the page option runs the unpatched check, with the entry from the RNG seeded by the browser's local time like the original's clock, shown as plain text | The original prints in 80×25 text mode; the 100-retrace pause before the prompt starts from page start, not from the program's clock read |
 
 ## 4. Not covered at all
 

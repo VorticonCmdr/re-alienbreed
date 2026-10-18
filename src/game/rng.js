@@ -6,6 +6,11 @@ export function seedRandom(v) {
 }
 
 // Seeds used by the original: boot (1000:027D, from the RTC) and every new game (1000:17FC, high word of the INT 8 counter).
+// 1000:027D-02A4: INT 1Ah function 2 returns the clock time in BCD; the seed is (minutes << 8 | seconds) + 0x40B.
+export function seedFromClock(date) {
+  const bcd = n => (Math.floor(n / 10) << 4) | n % 10;
+  return seedRandom(((bcd(date.getMinutes()) << 8 | bcd(date.getSeconds())) + 0x40b) & 0xffff);
+}
 export const seedForNewGame = tickCounterHigh => seedRandom(tickCounterHigh);
 
 export function nextRandom(state) {

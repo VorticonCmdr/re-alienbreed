@@ -13,6 +13,7 @@ import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
 import { titleLoop, titleFiles } from './title.js';
 import { intro, introFiles } from './intro.js';
 import { passcode } from './passcode.js';
+import { seedFromClock, nextRandom } from './rng.js';
 import { intexSession, mapSession, intexFiles, createIntexMemory } from './intex.js';
 import { createTimer, setReload, advanceRetrace, RELOAD, GAME_OPEN_SHARE, RETRACE_HZ } from './timing.js';
 import { createFmDriver, createMusic, songFile, SONGS } from './fmdriver.js';
@@ -135,11 +136,12 @@ function* idle(generator, state) { for (const _ of generator) { if (state) intTi
 
 // The program after start-up (1000:0831): title music, then the title loop, games and attract demos for ever.
 function* program(devLevel) {
+  const bootRng = seedFromClock(new Date()); // 1000:027D: the RNG is seeded from the clock at start-up
   if (devLevel !== null) return yield* gameSession(devLevel, false);
   if ($('passcode').checked) { // ALIEN.EX_ 1000:03C1-0493; the supplied ALIEN.EXE jumps over the comparison
     phase = 'passcode'; typedChars = []; canvas.hidden = true;
     const ok = yield* passcode({ exe: assets.exe, show: text => { $('dos').textContent = text; $('dos').hidden = false; },
-      pick: () => Math.floor(Math.random() * 256), // the game's RNG low byte [B038]; how the RNG is seeded this early is not established
+      pick: () => nextRandom(bootRng), // 03D5: one RNG step per prompt; the entry is the low six bits of [B038]
       takeChar: () => typedChars.length ? typedChars.shift() : null,
       log: e => console.info(`Alien Breed code for Table-${e.table} Row-${e.row} Column-${e.column}: ${e.code}`) });
     typedChars = null; $('dos').hidden = true; canvas.hidden = false;

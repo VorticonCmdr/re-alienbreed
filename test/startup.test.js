@@ -63,3 +63,11 @@ test('code check (ALIEN.EX_ 1000:03C1): 100 retraces, the right three characters
   if (flipped.join('') !== entry.code) assert.equal(run([...flipped, ...flipped, ...flipped], [0x25, 0x25, 0x25]).result, false, 'case-sensitive');
   assert.equal(run([...'xx\rxx\rxx\r'], [0x25, 0x25, 0x25]).result, false, 'three wrong codes');
 });
+
+test('the start-up RNG seed from the clock (1000:027D) gives the entry DOSBox showed at 10:10:56', async () => {
+  const { seedFromClock, nextRandom } = await import('../src/game/rng.js');
+  const rng = seedFromClock(new Date(2026, 9, 18, 10, 10, 56));
+  assert.deepEqual([rng.s & 0xffff, rng.s >>> 16, rng.c], [0x1461, -0x1461 & 0xffff, 1], 'seed (0x1056 + 0x40B)');
+  const value = nextRandom(rng);
+  assert.deepEqual([value, rng.s & 0xffff, rng.s >>> 16, rng.c, value & 0x3f], [0x9a78, 0x9a78, 0x0489, 1, 56]);
+});
