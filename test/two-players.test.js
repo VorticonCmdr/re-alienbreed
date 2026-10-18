@@ -50,3 +50,15 @@ test('camera: the midpoint of both players, the remaining one after a player is 
   for (let i = 0; i < 400; i++) followCamera(s);
   assert.equal(s.camera.x + 0xb0, p2.x - 1, 'follows player 2 alone');
 });
+
+test('a player out of lives: the freed record saves as zeros and the next level keeps that player out', { skip: missing }, async () => {
+  const { savePlayer } = await import('../src/game/sim.js');
+  const s = await level2(both()), [p1, p2] = s.players;
+  p1.credits = 0x1234; p2.energy = 0; p2.lives = 0;
+  let frames = 0; while (p2.active !== false || frames === 0) { stepFrame(s, [0, 0], 0); frames++; if (frames > 200) break; }
+  assert.equal(p2.active, false, 'the type-3 script ended and freed the record'); assert.equal(s.playerCount, 1);
+  const party = { count: s.playerCount, inGame: s.players.map(p => p.alive), saved: s.players.map(savePlayer) };
+  assert.deepEqual(party.inGame, [true, false]); assert.deepEqual([...party.saved[1].tally], [0, 0, 0, 0, 0, 0, 0, 0]);
+  const next = await level2(party);
+  assert.deepEqual([next.players[0].credits, next.players[1].alive, next.players[1].active, next.playerCount], [0x1234, false, false, 1]);
+});

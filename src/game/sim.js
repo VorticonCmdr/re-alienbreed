@@ -443,7 +443,7 @@ export function nextStage(level, result, levelCode) {
 export const newGamePlayer = (index = 0) => ({ energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: index ? 0x01 : 0x7f, credits: 0, map: 0, tally: new Uint8Array(8), moveMask: 0 });
 export function savePlayer(player) {
   const { energy, lives, keys, ammo, weapon, owned, credits, map, moveMask } = player;
-  return { energy, lives, keys, ammo, weapon, owned, credits, map, tally: Uint8Array.from(player.tally), moveMask };
+  return { energy, lives, keys, ammo, weapon, owned, credits, map, tally: Uint8Array.from(player.tally ?? new Uint8Array(8)), moveMask }; // a freed record (759C) saves as zeros
 }
 
 // One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera

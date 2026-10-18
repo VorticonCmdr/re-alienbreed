@@ -71,8 +71,8 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): a level change during a demo recording, a panel redraw for a player who is out (lives
-  0xFF), and shot probes outside the map that read memory the port does not model (5 pixels above the map, an active
+- Not implemented (strict stop): a level change during a demo recording, a panel redraw for a player who has just lost the
+  last life (lives 0xFF; only during the death spin, before the record is freed), and shot probes outside the map that read memory the port does not model (5 pixels above the map, an active
   object record). The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
 - Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
   it is set only after pauses (fades, the Intex). In-game the PIT runs

@@ -166,11 +166,11 @@ function present() {
   image.data.set(toRgba(display.frame, dacToRgb(display.dac))); context.putImageData(image, 0, 0);
   const state = game?.state; if (!state) return;
   if (state.demoSaved) { offerDemo(state.demoSaved); state.demoSaved = null; }
-  const p = state.players[0];
   const skipped = [...new Set(state.diagnostics.map(d => d.message.replace(/ at .*| \(.*/, '')))];
   $('preview-banner').hidden = state.strict;
   $('preview-banner').textContent = `Preview mode: not reproduced and skipped so far: ${skipped.join(', ') || 'nothing yet'}. Preview runs are not faithful.`;
-  $('debug').textContent = `Level ${game.level}  Keys ${p.keys}  Energy ${p.energy}  Lives ${p.lives}  Ammo ${p.ammo >> 7}+${p.ammo & 127}  Weapon ${p.weapon}  Aliens ${state.aliveAliens}  Frame ${state.frame}`;
+  const line = (p, n) => `P${n} keys ${p.keys} energy ${p.energy} lives ${p.lives} ammo ${p.ammo >> 7}+${p.ammo & 127} weapon ${p.weapon}`;
+  $('debug').textContent = `Level ${game.level}  ${state.players.map((q, i) => q.alive ? line(q, i + 1) : `P${i + 1} out`).join('  ')}  Aliens ${state.aliveAliens}  Frame ${state.frame}`;
 }
 
 // The whole game as one generator: every `yield` is one vertical retrace; yielding a promise waits for loading.
