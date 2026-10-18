@@ -133,7 +133,10 @@ function probeEffects(state, player, x, y) {
   else if (code === 0x3f) { player.conveyor |= 8; state.skipSafe = true; }
   else if (code === 0x37) { player.conveyor |= 4; state.skipSafe = true; }
   else if (code === 0x02) exitTouched(state);
-  else if (code === 0x0a && (state.level === 16 || state.level === 17)) unsupported(state, 'Level 16/17 objective cell 0x0A');
+  else if (code === 0x0a && (state.level === 16 || state.level === 17)) { // 1000:642D: arm a scripted spawn here
+    state.scriptedSpawn = { x, y }; state.scriptedSpawnTimer = 0x78; state.sounds.push(0x0a);
+    startAnimation(state, 0x84b4, state.probeIndex); writeCell(state, state.probeIndex, 0x223, 0);
+  }
   else if (UNSUPPORTED_PROBE_CODES.has(code)) unsupported(state, `Cell effect 0x${code.toString(16)} at (${x}, ${y})`);
 }
 // 1000:61DC and its copies: hurt flash, energy loss, sound 0x0F.
@@ -281,7 +284,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     bounceCounter: 0, // cs:5671, likewise
     objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, emptyRecord), objectCount: 0,
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
-    aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1,
+    aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1, scriptedSpawn: null,
     rng: rng ? { ...rng } : seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
     generatorFlags: [false, false, false, false], generatorsDestroyed: 0, selfDestruct: false, seconds: 0, redAlert: false,
     endSequence: 0, exitTaken: false, levelOver: null, tickAccumulator: 0, secondCycle: 0, levelTenTimer: 0x0f, // boot values from the image (cs:7969 is 0)
@@ -393,7 +396,7 @@ export function mainLoopKeys(state, scancode, abortScancode) {
 // Variables the level load never resets (static audit of 1000:1937-1FC1): the RNG [B0BA]-[B0BE], the frame counter
 // [AF84], cs:4035/4037 (reset only by some decor in 3D10), [8182], cs:5A43, cs:5671, cs:5119, the INT 8 work [AD4C]
 // and cs:7969, and the level 16/17 spawn timer cs:602A.
-const CARRIED = ['aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer'];
+const CARRIED = ['aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer', 'scriptedSpawn'];
 export const carriedGlobals = state => Object.fromEntries(CARRIED.map(k => [k, k === 'rng' ? { ...state.rng } : state[k]]));
 
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
@@ -476,6 +479,14 @@ function createShot(state, player, facing, type, x, y) {
   tallyIncrement(player.tally, TALLY.shots);
 }
 
+// 1000:3C08 for a shot: a point 1-3 pixels above the map reads the row table's preceding words, which are zero
+// bytes in the executable (2EF5:1CA2-1CA7), so it tests row 0. Higher points read unrelated memory (reported).
+function shotCell(state, x, y) {
+  const py = y - 16;
+  if (py < 0 && py >= -3 && x - 16 >= 0) return cellAt(state, x, 16);
+  return cellAt(state, x, y);
+}
+
 // 1000:5812: shots damage closed doors whose box contains (x, y + 0x18); the shot is not consumed.
 function shootDoors(state, x, y, damage) {
   for (const door of state.doors) {
@@ -502,7 +513,7 @@ export function updateShots(state) {
     shot.x = s16(shot.x + shot.vx); shot.y = s16(shot.y + shot.vy);
     if (!(shot.direction & 15)) unsupported(state, 'Shot without a direction');
     shootDoors(state, shot.x, s16(shot.y + 0x18), t.shotDamage[shot.type]);
-    const index = cellAt(state, shot.x, shot.y + 0x10), code = state.types[index] & 0xff;
+    const index = shotCell(state, shot.x, s16(shot.y + 0x10)), code = state.types[index] & 0xff;
     if (WALLS.has(code)) {
       if (code >= 0x2a && code <= 0x2d) hitGenerator(state, code - 0x2a);
       if (s16(state.generatorsDestroyed) >= 4) startSelfDestruct(state);
@@ -602,7 +613,10 @@ const random = state => nextRandom(state.rng);
 // that spawns are decremented once per free slot and frame, as in the original.
 function spawnAlien(state, slot) {
   if (s16(state.aliveAliens) >= 6) return;
-  if (state.scriptedSpawnTimer !== -1) { state.report('Scripted alien spawn (levels 16/17)'); return; }
+  if (state.scriptedSpawnTimer !== -1) { // 1000:4F01, once per free slot and frame
+    state.scriptedSpawnTimer = s16(state.scriptedSpawnTimer - 1);
+    if (state.scriptedSpawnTimer <= -1) { scriptedSpawn(state, slot); return; }
+  }
   const cx = state.camera.x, cy = state.camera.y;
   for (const r of state.spawnPoints) {
     if (s16(r.cooldown) > 0) { r.cooldown = s16(r.cooldown - 1); continue; }
@@ -630,6 +644,23 @@ function spawnAlien(state, slot) {
   }
 }
 
+// 1000:515E: a kind-2 alien at the armed cell; no cooldowns, no target alternation counter.
+function scriptedSpawn(state, slot) {
+  const { x, y } = state.scriptedSpawn;
+  slot.kind = 2; state.aliveAliens++;
+  if (x >= 16 && y >= 16) { const cell = cellAt(state, x, y); state.types[cell] |= 0x8000; slot.cell = cell; } // 3C08 out of range: no occupancy
+  slot.direction = 1;
+  let speed = (slot.kind & 3) + (state.level >> 1) + 5; if (speed > 15) speed = 15;
+  slot.speed = speed; slot.timer = s16(0x22 - 2 * speed);
+  slot.column = (speed >> 3) + (random(state) & 1) || 1;
+  const object = allocObject(state, 6, x, y);
+  if (object) {
+    Object.assign(object, { walk: 0, facing: 1, energy: 8, push: 0, moveMask: 15, stuck: 0, frame: 0x8d, animBase: 0x8d });
+    object.flags0B |= 0x80; slot.object = object; object.target = state.players[0];
+    if (state.playerCount !== 1) state.report('Alien targets with two players');
+  }
+  state.scriptedSpawn = null; state.scriptedSpawnTimer = -1;
+}
 // 1000:4B74: occupancy cleared, death animation started on the same object, slot freed and refilled this frame.
 function removeAlien(state, slot) {
   if (slot.cell >= 0 && slot.cell <= 0x2d00) state.types[slot.cell] &= 0x7fff;

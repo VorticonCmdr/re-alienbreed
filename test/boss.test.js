@@ -33,3 +33,19 @@ for (const [level, energy] of [[5, 0x200], [8, 0x280], [17, 0x300]]) {
     assert.ok(state.objects.filter(o => o.active && (o.type === 8 || o.type === 9)).length >= 15, 'death explosions');
   });
 }
+
+test('levels 16/17: an objective cell 0x0A arms a scripted kind-2 spawn there (1000:642D, 4F01, 515E)', { skip: missing }, async () => {
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const level = 16, map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL(levelMapNames(exe)[level].toUpperCase(), game)))));
+  const state = startLevel({ tables: readTables(exe), map, level, tileset: levelTileset(exe, level), rngSeed: 1 });
+  stepFrame(state, 0, 1); stepFrame(state, 0, 1);
+  const cell = map.types.findIndex(t => (t & 0xff) === 0x0a), cx = (cell % 120) * 16 + 16 + 8, cy = Math.floor(cell / 120) * 16 + 16 + 8;
+  const p = state.players[0]; p.x = cx; p.y = cy + 12; // the upper corner probes land in the objective cell
+  stepFrame(state, 0, 1);
+  assert.equal(state.types[cell], 0, 'cell becomes floor'); assert.equal(state.tiles[cell], 0x223); assert.ok(state.sounds.includes(0x0a));
+  assert.ok(state.scriptedSpawnTimer > 0 && state.scriptedSpawnTimer <= 0x78);
+  p.x = 0x300; // move away so nothing else interferes with the objective
+  let spawned = null;
+  for (let f = 0; f < 200 && !spawned; f++) { stepFrame(state, 0, 1); spawned = state.aliens.find(a => a.kind === 2 && a.object && Math.abs(a.object.x - cx) < 16 && Math.abs(a.object.y - cy) < 24); }
+  assert.ok(spawned, 'a kind-2 alien appears at the armed point'); assert.equal(state.scriptedSpawnTimer, -1); assert.equal(spawned.object.energy, 8);
+});
