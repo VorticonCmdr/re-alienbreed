@@ -406,6 +406,17 @@ export function mapRequested(state, scancode) {
   return { consumed: true, player: state.endSequence ? null : state.players.find(p => p.alive && p.map & 1) ?? null };
 }
 
+// 1000:1FEE-2011 (and 3526 for the '-' cheat): what follows a level. A level code typed in the Intex has already set
+// [B0B2], so the usual increment then leads to its index plus one.
+export function nextStage(level, result, levelCode) {
+  if (result === 'previous') return { kind: 'level', level: level - 1 };
+  if (result !== 'complete') return { kind: result === 'demo' ? 'title' : 'gameover' };
+  const index = levelCode ?? level;
+  if (index === 18) return { kind: 'ending' };
+  if (index === 0) return { kind: 'level0' };
+  return { kind: 'level', level: index + 1 };
+}
+
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
 // (1000:21A6), restored by the next level's start (1000:1E15-1E6C). +69, the movement mask, is part of the save.
 export const newGamePlayer = () => ({ energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, tally: new Uint8Array(8), moveMask: 0 });
@@ -417,7 +428,8 @@ export function savePlayer(player) {
 // One pass of 1000:37D6. `view` is what the original shows after this frame's flip: tiles scrolled to the camera
 // from before this frame's follow, sprites at the current camera, objects as updated in the previous frame.
 export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
-  if (state.levelOver) throw new Error('stepFrame after the level ended');
+  // Only the main loop (1000:34E6) tests for the end of a level; the bare passes at level start and after the Intex
+  // run whatever the state, so a frame may follow one that ended the level; the reason is what 34E6 would see now.
   state.sounds = [];
   for (let i = 0; i < ticks; i++) timerTick(state); // INT 8 work, applied at the frame start (its exact phase is approximate)
   if (s16(state.levelTenTimer) < 0 && state.level === 10 && !state.endSequence) startSelfDestruct(state);
@@ -449,9 +461,8 @@ export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
   if (!state.endSequence) updateAliens(state);
   state.frame++;
   // 1000:34E6 at the top of the next pass: exit taken, nobody left, or the end sequence finished.
-  if (state.exitTaken) state.levelOver = 'complete';
-  else if (!state.players.some(p => p.alive)) state.levelOver = 'gameover';
-  else if (s16(state.endSequence) >= 0x8c) state.levelOver = 'gameover';
+  if (state.levelOver === 'demo') return;
+  state.levelOver = state.exitTaken ? 'complete' : !state.players.some(p => p.alive) || s16(state.endSequence) >= 0x8c ? 'gameover' : null;
 }
 
 // ---- Shots (1000:5B58 player fire, 5928 creation, 52F4 per-frame update) ----

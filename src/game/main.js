@@ -6,7 +6,7 @@ import { buildGamePalette, dacToRgb, alienSheetName, redAlertPalette, levelStart
 import { createHud, drawHud, blitPanel } from './hud.js';
 import { createFramebuffer, drawMap, drawObjects, drawShots, toRgba, SCREEN_WIDTH } from './render.js';
 import { frameDescriptor, drawSprite } from './sprites.js';
-import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, mapRequested, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
+import { readTables, startLevel, levelTileset, stepFrame, mainLoopKeys, mapRequested, nextStage, savePlayer, carriedGlobals, timerTick, UnsupportedPath } from './sim.js';
 import { createDisplay, cutFont, createTextState, fadeIn, fadeOut } from './screens.js';
 import { intermission, intermissionPicture, deckmanSheetName } from './intermission.js';
 import { gameOver, ending, gameOverFiles, endingPictures } from './endings.js';
@@ -207,23 +207,24 @@ function* gameSession(firstLevel, demo) {
       yield;
     }
     inGame = false;
+    const next = nextStage(level, result, state.levelCode);
     if (result === 'previous') { // 1000:3526: back one level; the fade runs with the music still playing
       yield* idle(fadeOut(display), state);
       carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
-      level = (level - 1) & 0xffff; if (level > 18) throw new UnsupportedPath('Level index below 0', {}); continue;
+      if (next.level < 0) throw new UnsupportedPath('Level index below 0', {});
+      level = next.level; continue;
     }
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
-    if (state.levelCode !== undefined) level = state.levelCode; // a level code typed in the Intex set [B0B2]
-    if (result === 'complete' && level !== 0 && level !== 18) {
+    if (next.kind === 'level') {
       carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
-      level++; continue;
+      level = next.level; continue;
     }
     const input = () => keyboard.inputByte();
-    if (result === 'complete' && level === 18) { // 1000:41A2
+    if (next.kind === 'ending') { // 1000:41A2
       const pictures = []; for (const name of endingPictures(assets.exe)) pictures.push(yield loadPicture(name));
       yield* idle(ending({ exe: assets.exe, display, font: assets.font, text: assets.text, pictures, input, report: state.report }), state);
-    } else if (result === 'complete') { // index 0: 1000:44EC with the exit taken shows text page 0x13
+    } else if (next.kind === 'level0') { // index 0: 1000:44EC with the exit taken shows text page 0x13
       const picture = yield loadPicture(intermissionPicture(assets.exe, 0));
       yield* idle(intermission(0, { exe: assets.exe, display, font: assets.font, text: assets.text, picture, deckman: assets.deckman, tables: assets.tables,
         descriptor: assets.descriptor, input, report: state.report, exitTaken: true }), state);

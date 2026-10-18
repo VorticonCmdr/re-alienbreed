@@ -42,11 +42,12 @@ PIT rates the driver programs, with the alarm song's start-without-stop quirk.
 | --- | --- |
 | `npm test` | Unit tests; tests needing the original files skip without them. |
 | `npm run verify` | Requires the original files. Every test with skipping forbidden, then the browser scenario in headless Chrome (intermission, new game at index 1, level index 2 movement, firing, sound, aliens, music at 120 Hz). |
-| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, and the level 5 boss fight (boss, player, RNG, records) at two points of a partial restore, each with a negative control. |
+| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, and the level 5 boss fight (boss, player, RNG, records) in a partial restore: one unfitted point with a negative control and one point fitted to a 5-frame offset. |
 
 Verified levels, from strongest to weakest:
 
-- **Independent runtime**: the music driver and the level 5 boss against the original's memory (above).
+- **Independent runtime**: the music driver against the original's memory; the level 5 boss at one unfitted and one
+  fitted point (above).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
   checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`).

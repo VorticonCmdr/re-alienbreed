@@ -49,3 +49,12 @@ test('levels 16/17: an objective cell 0x0A arms a scripted kind-2 spawn there (1
   for (let f = 0; f < 200 && !spawned; f++) { stepFrame(state, 0, 1); spawned = state.aliens.find(a => a.kind === 2 && a.object && Math.abs(a.object.x - cx) < 16 && Math.abs(a.object.y - cy) < 24); }
   assert.ok(spawned, 'a kind-2 alien appears at the armed point'); assert.equal(state.scriptedSpawnTimer, -1); assert.equal(spawned.object.energy, 8);
 });
+
+test('frames after the exit is taken still run (the bare passes after the Intex and at level start do not test it)', { skip: missing }, async () => {
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL(levelMapNames(exe)[2].toUpperCase(), game)))));
+  const state = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), rngSeed: 1 });
+  state.levelCode = 7; state.exitTaken = true; // what a level code typed in the Intex leaves behind
+  stepFrame(state, 0, 1); assert.equal(state.levelOver, 'complete');
+  stepFrame(state, 0, 1); assert.equal(state.levelOver, 'complete', 'the second exit frame does not throw');
+});

@@ -51,9 +51,10 @@ for (const [name, song, file] of CAPTURES) {
 }
 
 // Boss on level index 5 (partial restore: the attract demo redirected to index 5, the player moved off the exit pad and
-// [7B3F] set before the first warm-up frame; starting counters read from the original). Frame-end hit 5 matches port
-// step 5; hit 115 matches step 120: the original's hit count fell 5 behind in between (breakpoint hits lost while
-// skipping, not explained further), so the step is pinned by the boss countdown and the player's shots.
+// [7B3F] set before the first warm-up frame; starting counters read from the original). Hit 5 is an unfitted point
+// (port step 5). Hit 115 is FITTED: it matches port step 120, chosen because it matches; the RNG and the boss position
+// do not change over steps 113-123, so only the boss countdown and the shot count pin it. Why the original's hit count
+// is 5 behind is not established (inferred: breakpoint hits lost while skipping).
 {
   const { exeView } = await import('../src/game/exe.js');
   const { decodeMap, levelMapNames } = await import('../src/game/level.js');
@@ -63,7 +64,7 @@ for (const [name, song, file] of CAPTURES) {
   const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL(levelMapNames(exe)[5].toUpperCase(), game)))));
   const demo = new Uint8Array(await readFile(new URL('DEMO.DAT', game)));
   const load = async n => JSON.parse(await readFile(new URL(`.work/captures/boss5-run2-hit${n}.json`, root), 'utf8'));
-  const captures = [[await load(5), 5], [await load(115), 120]], st = captures[0][0].start;
+  const captures = [[await load(5), 5, 'unfitted'], [await load(115), 120, 'fitted to step 120']], st = captures[0][0].start;
   const run = steps => {
     const globals = { frameCounter: st.frameCounter, tickAccumulator: st.tickAccumulator, burning: st.burning, timer60: st.timer60, timer104: st.timer104,
       spawnCounter: st.spawnCounter, secondCycle: st.secondCycle, spreadCounter: st.spreadCounter, bounceCounter: st.bounceCounter, scriptedSpawnTimer: -1,
@@ -76,16 +77,16 @@ for (const [name, song, file] of CAPTURES) {
     return { boss: { x: b.x, y: b.y, frame: b.frame, energy: b.energy, facing: b.facing, mode: b.mode, countdown: b.countdown }, player: before,
       rng: state.atFlip.rng, types: state.objects.slice(0, 6).map(o => o.active ? o.type : 0) };
   };
-  for (const [capture, step] of captures) {
+  for (const [capture, step, kind] of captures) {
     const b = Buffer.from(capture.records, 'base64'), rec = r => { const o = r * 0x6c, w = k => b.readUInt16LE(o + k), s = k => b.readInt16LE(o + k);
       return { x: s(0), y: s(2), frame: w(6), type: w(0xe), energy: s(0x2e), facing: w(0x1e), mode: b[o + 0x3f], countdown: s(0x4d), ammo: w(0x42) }; };
     const records = Array.from({ length: 6 }, (_, r) => rec(r)), boss = records.find(r => r.type === 0x0c), port = run(step);
-    check(`boss level 5 hit ${capture.hit}: boss`, () => assert.deepEqual(port.boss, { x: boss.x, y: boss.y, frame: boss.frame, energy: boss.energy, facing: boss.facing, mode: boss.mode, countdown: boss.countdown }));
-    check(`boss level 5 hit ${capture.hit}: player`, () => assert.deepEqual(port.player, { x: records[0].x, y: records[0].y, ammo: records[0].ammo, frame: records[0].frame }));
-    check(`boss level 5 hit ${capture.hit}: RNG`, () => assert.deepEqual(port.rng, { s: ((capture.rng[1] << 16) | capture.rng[0]) >>> 0, c: capture.rng[2] & 1 }));
-    check(`boss level 5 hit ${capture.hit}: record types`, () => assert.deepEqual(port.types, records.map(r => r.type)));
+    check(`boss level 5 hit ${capture.hit} (${kind}): boss`, () => assert.deepEqual(port.boss, { x: boss.x, y: boss.y, frame: boss.frame, energy: boss.energy, facing: boss.facing, mode: boss.mode, countdown: boss.countdown }));
+    check(`boss level 5 hit ${capture.hit} (${kind}): player`, () => assert.deepEqual(port.player, { x: records[0].x, y: records[0].y, ammo: records[0].ammo, frame: records[0].frame }));
+    check(`boss level 5 hit ${capture.hit} (${kind}): RNG`, () => assert.deepEqual(port.rng, { s: ((capture.rng[1] << 16) | capture.rng[0]) >>> 0, c: capture.rng[2] & 1 }));
+    check(`boss level 5 hit ${capture.hit} (${kind}): record types`, () => assert.deepEqual(port.types, records.map(r => r.type)));
   }
-  const wrong = run(119); // negative control: one step early
-  check('boss level 5: one step off is detected', () => assert.notDeepEqual(wrong.boss.countdown, run(120).boss.countdown));
+  const early = run(4); // negative control for the unfitted point: one step early
+  check('boss level 5: one step off at hit 5 is detected', () => assert.notDeepEqual(early.boss, run(5).boss));
 }
 console.log(`runtime checks: ${checks} passed`);

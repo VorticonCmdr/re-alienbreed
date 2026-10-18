@@ -162,3 +162,13 @@ test('destructible wall 0x12 (1000:5502): floor, three burning 0x45 cells one co
   for (const dy of [0, 16, 32]) assert.equal(state.types[at(232, 116 + dy)], 0x45);
   assert.equal(state.burning, 0x10); assert.equal(state.wallsDestroyed, 1); assert.deepEqual(state.sounds, [1]); assert.equal(state.shots[0].type, 1, 'the shot flies on');
 });
+test('what follows a level (1000:1FEE): next index, level codes from the Intex, ending, index 0, the - cheat', async () => {
+  const { nextStage } = await import('../src/game/sim.js');
+  assert.deepEqual(nextStage(3, 'complete'), { kind: 'level', level: 4 });
+  assert.deepEqual(nextStage(3, 'complete', 7), { kind: 'level', level: 8 }, 'code k sets [B0B2] = k+1, so index k+2 follows');
+  assert.deepEqual(nextStage(3, 'complete', 18), { kind: 'ending' });
+  assert.deepEqual(nextStage(18, 'complete'), { kind: 'ending' });
+  assert.deepEqual(nextStage(0, 'complete'), { kind: 'level0' });
+  assert.deepEqual(nextStage(5, 'previous'), { kind: 'level', level: 4 });
+  assert.deepEqual(nextStage(5, 'gameover'), { kind: 'gameover' }); assert.deepEqual(nextStage(2, 'demo'), { kind: 'title' });
+});
