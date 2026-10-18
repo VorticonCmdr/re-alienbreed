@@ -21,6 +21,10 @@ the player's energy, lives, keys, ammo, weapons, credits and tallies, the random
 original never resets. After index 18 the ending plays; every finished game ends on the game-over screen.
 `?level=N` (development) skips the title and starts a new game at index N without the first intermission.
 
+Two players: TWO on the title. Player 2 takes its controller from SETUP.DAT like the original; the shipped file gives it
+none, so it reads the first map word (it stands still or walks right, depending on the level). The page option "Player 2
+controls" gives it joystick 2 instead, fed from W A S D (fire F, action G) or a gamepad.
+
 Intex terminals (action key on a terminal cell): boot text with the typewriter, main menu, weapon and tool shops,
 radar map, mission text, statistics, info pages, the cheat and level-code words (including demo recording: R in the
 level then records 0x400 frames into the attract demo and offers them as `DEMO.DAT`; and the exit word, which ends the
@@ -54,6 +58,8 @@ Verified levels, from strongest to weakest:
   ticks (start with three generators counted, a partial restore).
   Shots above the map on level index 11: the word the original reads 1-8 pixels above matches the port's model
   (scenario [shot-above-map.json](scenarios/shot-above-map.json); 5 pixels above is not modelled).
+  Two players in the attract demo (player 2 added at the level start, and TWO selected): both records, the camera
+  midpoint, the in-game flags and the RNG (scenario [two-players.json](scenarios/two-players.json)).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
   checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`).
@@ -65,8 +71,9 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): two players, a level change during a demo recording, and shot probes outside the
-  map that read memory the port does not model (5 pixels above the map, an active object record). The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
+- Not implemented (strict stop): a level change during a demo recording, a panel redraw for a player who is out (lives
+  0xFF), and shot probes outside the map that read memory the port does not model (5 pixels above the map, an active
+  object record). The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
 - Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
   it is set only after pauses (fades, the Intex). In-game the PIT runs
   at 120 Hz; interrupts arriving while the frame has them disabled are collapsed and do not tick the music. The share of

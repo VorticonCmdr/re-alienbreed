@@ -1,0 +1,21 @@
+{
+ "scenario": "two-players",
+ "description": "Two players on level index 2. (1) The attract demo with player 2 added at the level start (partial restore): player 1 plays DEMO.DAT, player 2 reads DS:0000 (0 on this level) and stands still. (2) The attract demo with TWO selected on the title: player 2 is counted in but never created.",
+ "verify": "npm run verify:runtime",
+ "build": { "ALIEN.EXE": "0787a2ca63e712ef1e2278fd5a78d9a0ea1e9ca0197398ab9e4cb684b067e0c7", "SETUP.DAT": "shipped file (byte 0 = 1, byte 2 = 0: player 1 on the keyboard, player 2 without a controller)" },
+ "emulator": { "engine": "dosbox-automation 0.84.0-vc1 (f6d9b), dosbox-mcp bridge 0.1.1", "cycles": "bridge default; demo playback keeps the lag flag at 0" },
+ "recipe": {
+  "added": [
+   "Fresh instance, boot to the passcode and type three keys; leave the title (ONE selected) until the attract demo starts.",
+   "Execute breakpoint at live 01F5:1F8D with cs:[8716] = 2: write record 1236:BE88 as a real two-player game leaves it at its level start (type 1, script 0x018A, flags 0x80/0xC0, facing 1, energy 0x40, owned 0x01, ammo 0x17F, weapon 1, lives 4) at camera + (0xC0, 0x78) with +18/+1A equal and +5C its cell; set [B098] = FFFF, [B09A] = 2 and [AD4E] + 1 (74FC counts the record).",
+   "Frame-end breakpoints at live 20EA:12BC with [AF84] = 50, 100 ... 1000: camera, flags B096-B09A, RNG, records BE1C + 8 x 0x6C."
+  ],
+  "selected": [
+   "Fresh instance; on the title press Up, Up, Right (cs:1117 = 1, TWO); leave the title until the attract demo starts.",
+   "At 01F5:1F8D read [B092]-[B09A] and BE88; at the frame end with [AF84] = 100 read the camera, the flags, player 1, BE88 and the RNG."
+  ]
+ },
+ "inputs": "DEMO.DAT for player 1 (no planned inputs); player 2 reads DS:0000 ([B094] = 0)",
+ "alignment": { "rule": "A frame end with [AF84] = N is the port's flip of step N-1 (state.atFlip with state.recordFlip).", "negativeControl": "one step later must differ" },
+ "captures": { "location": ".work/captures (local only)", "files": ["two-players-demo.json", "two-selected-demo.json"] }
+}

@@ -7,7 +7,7 @@ import { createFmDriver, createMusic } from '../src/game/fmdriver.js';
 
 const root = new URL('../', import.meta.url), game = new URL('game/', root);
 const required = ['.work/captures/avmfm-title-1000.json', '.work/captures/avmfm-ingame-3000.json', '.work/captures/boss5-run2-hit5.json', '.work/captures/boss5-run2-hit115.json',
-  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames', 'shot-above-y40', 'shot-above-y39', 'shot-above-y38'].map(n => `.work/captures/${n}.json`)];
+  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames', 'shot-above-y40', 'shot-above-y39', 'shot-above-y38', 'two-players-demo', 'two-selected-demo'].map(n => `.work/captures/${n}.json`)];
 const missing = required.filter(p => !existsSync(new URL(p, root)));
 if (missing.length) { console.error(`Missing runtime captures: ${missing.join(', ')}`); process.exit(2); }
 let checks = 0;
@@ -195,5 +195,41 @@ for (const [name, song, file] of CAPTURES) {
     assert.deepEqual(heights, [1, 2, 3, 4, 6, 7, 8]); for (const r of modelled) assert.equal(r.port, r.original, `${r.above} px above`); });
   check('shots above the map: only the panel buffer read 5 pixels above is unmodelled', () => assert.deepEqual([...new Set(results.filter(r => r.port === null).map(r => r.above))], [5]));
   check('shots above the map: the earlier row-0 rule is detected', () => assert.ok(results.some(r => r.oldRule !== undefined && r.oldRule !== r.original)));
+}
+// Two players (docs/port/scenarios/two-players.json). (1) The attract demo with player 2 added at the level start (partial
+// restore): both records, the effect records, the camera midpoint, [B09A] and the RNG at 20 frame ends, at the flip of step
+// N-1, with a one-step-later control. (2) The attract demo with TWO selected: player 2 counted in but never created (the
+// "ghost") drops out on the first pass; frame 100 against the original.
+{
+  const { exeView } = await import('../src/game/exe.js');
+  const { decodeMap } = await import('../src/game/level.js');
+  const { decompressLzhuf } = await import('../src/lzhuf.js');
+  const { readTables, startLevel, levelTileset, stepFrame } = await import('../src/game/sim.js');
+  const exe = exeView(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL('LBMZ.HUF', game)))));
+  const demo = new Uint8Array(await readFile(new URL('DEMO.DAT', game))), s16 = v => (v << 16) >> 16;
+  const both = { count: 2, inGame: [true, true], saved: [null, null] };
+  const capture = JSON.parse(await readFile(new URL('.work/captures/two-players-demo.json', root), 'utf8'));
+  const state = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), rngSeed: 0, party: both }); // created like a game,
+  state.demoMode = 2; state.recordFlip = true; // then played as the demo, as the partial restore does
+  check('two players added to the demo: player 2 starts at camera + (0xC0, 0x78)', () => assert.deepEqual([state.players[1].x, state.players[1].y], capture.start.p2));
+  const flips = []; for (let k = 0; k < 1001; k++) { stepFrame(state, [demo[k], state.types[0]], 0); flips.push({ ...state.atFlip, camera: { ...state.camera }, count: state.playerCount }); }
+  const compare = shift => capture.stops.filter(st => {
+    const b = Buffer.from(st.records, 'base64'), f = flips[st.af84 - 1 + shift], r = Buffer.from(st.rng), c = Buffer.from(st.camera);
+    const rec = i => { const o = i * 0x6c, type = b.readUInt16LE(o + 0xe); return type ? [type, b.readInt16LE(o), b.readInt16LE(o + 2), b.readUInt16LE(o + 6), b.readInt16LE(o + 0x2e)] : null; };
+    const prec = i => { const o = i < 2 ? f.players[i] : f.objects[i]; return o && (i < 2 ? o.type : o.active) ? [o.type, o.x, o.y, o.frame, s16(o.energy ?? 0)] : null; };
+    const orig = { camera: [c.readInt16LE(0), c.readInt16LE(2)], count: st.flags[4], rng: [r.readUInt16LE(0), r.readUInt16LE(2), r.readUInt16LE(4) & 1], recs: [0, 1, 2, 3, 4, 5, 6, 7].map(rec) };
+    const port = { camera: [f.camera.x, f.camera.y], count: f.count, rng: [f.rng.s & 0xffff, f.rng.s >>> 16, f.rng.c], recs: [0, 1, 2, 3, 4, 5, 6, 7].map(prec) };
+    return JSON.stringify(orig) !== JSON.stringify(port);
+  }).map(st => st.af84);
+  check(`two players added to the demo: ${capture.stops.length} frame ends (both players, records, camera midpoint, [B09A], RNG)`, () => assert.deepEqual(compare(0), []));
+  check('two players added to the demo: one step later is detected', () => assert.ok(compare(1).length > 0));
+  const ghost = JSON.parse(await readFile(new URL('.work/captures/two-selected-demo.json', root), 'utf8')).frame100;
+  const g = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), demoMode: 2, rngSeed: 0, party: both });
+  for (let k = 0; k < 99; k++) stepFrame(g, [demo[k], g.types[0]], 0);
+  const p2 = g.players[1];
+  check('demo with TWO selected: player 2 never created drops out on the first pass; frame 100 matches', () => assert.deepEqual(
+    { camera: [g.camera.x, g.camera.y], flags: [g.players[0].alive ? 0xffff : 0, p2.alive ? 0xffff : 0, g.playerCount], p1: [g.players[0].x, g.players[0].y],
+      p2: { type: p2.type, energy: p2.energy, lives: p2.lives, invulnerable: p2.invulnerable, x: p2.x, y: p2.y, frame: p2.frame, active: !!p2.active }, rng: [g.rng.s & 0xffff, g.rng.s >>> 16, g.rng.c] }, ghost));
 }
 console.log(`runtime checks: ${checks} passed`);

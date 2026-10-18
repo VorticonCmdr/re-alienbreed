@@ -8,9 +8,9 @@ everything that is not done, not checked against the original, or approximated. 
 
 | Item | What the original does | Where | What it would take |
 | --- | --- | --- | --- |
-| Two players | The title menu offers it; both player records (`BE1C`, `BE88`) run, aliens alternate their target by the parity of `cs:5119` (`1000:50CD`), credits can be shared (`cs:1118`), the HUD shows both, the camera follows both | `1000:50B1`–`50EF`, `1000:7BAE` (camera), HUD `18B2:17D0` | A second input byte and key bindings (SETUP.DAT `0x5E`–`0x66` hold only one set; the second set is not located), the camera rule for two players, target alternation, then a DOSBox comparison with two inputs |
 | Shot probes in unmodelled memory | Outside the map, `1000:3C08` reads `DS` at row word + column word, which can land outside the type map. The port models the type map, seven static data areas and freed object records; it stops on the rest: the 5-pixel-above read (`DS:8E12` + column, a runtime buffer whose address also depends on the DOS load segment), an active object record (4 pixels above), any other address, and a destructible-wall code (0x12/0x13) read outside the map | `1000:3C08`, `2EF5:1C82`–`1CA6`, `5502`/`5579` | Identify the buffer at `DS:8E12` and encode active object records; only level index 11 (PCMAP3, columns 20–31) lets a shot leave the top of the map |
 | Level change while a demo recording runs | `1000:1E9D` skips the player restore at the next level load while `cs:8716` is set, so the new level starts with a player record that the level load (`6644`) cleared and `1DF4` re-initialised | `1000:1E93`–`1F73` | Establish what `1DF4`–`1E6C` leaves in the record without the restore; a recording lasts 0x400 frames (about 15 s), so an exit inside one is unusual |
+| Panel redraw for a player who is out | `18B2:17F6`/`17FA` redraw both halves of the panel after the Intex, the map and boss changes, also for a player with lives 0xFF; how `292C` draws that is not read | `18B2:292C` | Read `292C` |
 | Freeing a child record | `1000:74B5` frees child records (count `+34`) by clearing only the flags `+0A`/`+0B`, so their other fields persist into the next allocation | `1000:74B5`–`74FB` | Model per-field persistence for that path; the port reports it (`Freeing a child object`) |
 
 ## 2. Implemented from the disassembly, not compared with an original run
@@ -30,6 +30,7 @@ in-level items; screens need breakpoints on their retrace waits instead.
 | Title loop, credits, story pages, attract demo hand-off | `src/game/title.js` | `1000:083B`–`0B2D` | Retrace counts per page |
 | Start-up logos | `src/game/intro.js` | `1000:0761`–`0767`, `7D0C`–`7DE4` | The black start palette was read in DOSBox; the retrace counts are static |
 | Ending and game-over screens | `src/game/endings.js` | `1000:41A2`, `4109` | Retrace counts |
+| Two players beyond the demo runs: the Intex owner, shared credits, a player dropping out mid-game, player 2 walking right on levels where `DS:0000` is 1, the kill credit | `sim.js`, `main.js` | `1000:2588`, `6467`, `3A00`, `4BA9` | A real two-player game in DOSBox with per-frame lag and input capture |
 | Demo recording | `stepFrame` (`state.demoRecord`), `main.js` | `1000:364A`, `3935`–`3981` | Record in DOSBox with the cheat and compare the written `demo.dat` with the port's buffer for the same inputs |
 | Exit cheat | `exitToDos` in `main.js` | `1000:7ABF`–`7B47` | — (the text comes from the user's executable) |
 | The in-game timer rate and the countdown per frame | `src/game/timing.js` | PIT reload 0x26D7 (120 Hz) | Needs a run without breakpoint stops in the countdown window (stops change the ticks per frame), e.g. read `[B078]` and `[AF84]` only at the start and end |
@@ -47,14 +48,17 @@ in-level items; screens need breakpoints on their retrace waits instead.
 | Counters at a new game | Boot values | In the original they depend on how long the title and attract loop ran; only the RNG seed (`[B07A]`) is modelled from elapsed time |
 | Text-mode exit screen | The exit message in a plain text block | The original switches to 80×25 text mode and prints it with DOS |
 | Saving the recorded demo | Offered as a `DEMO.DAT` download; the attract demo plays it for the rest of the session | The original writes `demo.dat` into the game directory, so it also plays after a restart |
+| Player 2's controls | As SETUP.DAT (the shipped file gives none: player 2 reads `DS:0000`), or joystick 2 from W A S D / a gamepad (page option) | The original reads a PC joystick through `782E`; the keys and gamepad are a port addition. The poll runs every 4th INT 8 tick without the `cs:3AEB`/`cs:7871` gating |
+| Demo with TWO selected | The cleared player-2 record is not updated on the first pass; its death check then takes it out | The original runs the update, whose probes around (0, 0) read memory outside the map; observed to change nothing |
+| Shot kill with nobody in the game | Credited to player 1 | The original credits whatever record BX holds; not established |
 | Panel reloads after a boss starts or dies (`209E`, `A316`, `A31A`) | Not reproduced | The panel is redrawn every frame anyway |
 | Start-up code check | Off by default (as in `ALIEN.EXE`); the page option runs the unpatched check, with the entry from the RNG seeded by the browser's local time like the original's clock, shown as plain text | The original prints in 80×25 text mode; the 100-retrace pause before the prompt starts from page start, not from the program's clock read |
 
 ## 4. Not covered at all
 
 - The SETUP program and sound-card selection: the port always behaves like the Sound Blaster set-up (`[AF94]` = 4).
-- The pause and quit keys of SETUP.DAT (offsets `0x64`, `0x66`): the port reads the bindings but does nothing with them;
-  where the original uses them is not located yet.
+- The pause and quit keys of SETUP.DAT (offsets `0x64`, `0x66`): the port reads the bindings but does nothing with them.
+  The original reads the pause key at `1000:3A98`; the quit key has no direct reference.
 - Joysticks: the original polls them every 4th INT 8 tick (`1000:782E`) when SETUP.DAT selects one and reads the input
   word from `B42A`/`B42C`; the port takes the keyboard only.
 - Other builds of the game: the port refuses executables other than the two supported hashes.

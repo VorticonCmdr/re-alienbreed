@@ -275,7 +275,7 @@ function* scanPoints() { for (let y = 16; y <= 0x5f0; y += 16) for (let x = 16; 
 // Tileset id per level, byte table cs:4021 in the executable.
 export const levelTileset = (exe, level) => exe.u8(CODE, 0x4021 + level);
 
-export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals }) {
+export function startLevel({ tables, map, level, tileset, demoMode = 0, strict = true, saved, rngSeed = 0, rng, globals, party }) {
   const state = {
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frameTicks: 0, loadingFile: false, countdownFrozen: false, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
@@ -312,16 +312,31 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
   const start = find(0x35); // 1000:3BA6; the camera stays at 0 if there is no marker
   const camX = start.missing ? 0 : Math.max(0, s16(start.x - 0xa0)), camY = start.missing ? 0 : Math.max(0, s16(start.y - 0x58));
   state.camera = { x: camX, y: camY }; state.viewCamera = { ...state.camera };
-  const stats = saved ? { ...saved, tally: Uint8Array.from(saved.tally) } : newGamePlayer();
-  const player = {
-    x: s16(camX + 0xb0), y: s16(camY + 0x68), frame: 0x0b, animBase: 0x0b, walk: 0, facing: 1, state: 1, height: 0,
-    ...stats, fireRepeat: 0, conveyor: 0, onIntex: 0, hurt: false, invulnerable: 0, cell: -1,
+  // `party`: { count ([B09A]), inGame: [[B096], [B098]], saved: [player 1, player 2] } carried from the previous level; by
+  // default one player. 1000:1DB9 places player 1 at camera + (0xB0, 0x68) if it is in the game, 1E93 player 2 at
+  // camera + (0xC0, 0x78) if it is in the game and this is not a demo. A demo started with TWO selected keeps player 2
+  // counted in with its record never created (a "ghost").
+  const crew = party ?? { count: 1, inGame: [true, false], saved: [saved, null] };
+  state.playerCount = crew.count; state.objectCount = 0;
+  const makePlayer = (index, dx, dy) => {
+    const kept = crew.saved[index], stats = kept ? { ...kept, tally: Uint8Array.from(kept.tally) } : newGamePlayer(index);
+    const player = {
+      x: s16(camX + dx), y: s16(camY + dy), frame: 0x0b, animBase: 0x0b, walk: 0, facing: 1, state: 1, height: 0,
+      ...stats, fireRepeat: 0, conveyor: 0, onIntex: 0, hurt: false, invulnerable: 0, cell: -1, index,
+    };
+    player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
+    if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
+    // Player record set up like 7376 without clearing the player fields (74FC is not fully read yet).
+    Object.assign(player, { alive: true, active: true, flags0A: 0x80, flags0B: 0x40, type: 1, script: tables.scriptStart(1), z: 0, oldZ: 0, delay: 0, priority: 8, ticks: 0 });
+    state.objects[index] = player; state.objectCount++;
+    return player;
   };
-  player.oldX = player.safeX = player.x; player.oldY = player.safeY = player.y;
-  if (player.x - 16 >= 0 && player.y - 16 >= 0) player.cell = cellAt(state, player.x, player.y); // no occupancy bit yet
-  // Player record set up like 7376 without clearing the player fields (74FC is not fully read yet).
-  Object.assign(player, { alive: true, active: true, flags0A: 0x80, flags0B: 0x40, type: 1, script: tables.scriptStart(1), z: 0, oldZ: 0, delay: 0, priority: 8, ticks: 0 });
-  state.objects[0] = player; state.objectCount = 1; state.players = [player];
+  // A player out of the game keeps the cleared record (6644): nothing is drawn, nothing updated.
+  const absent = (index, inGame) => Object.assign(state.objects[index], { energy: 0, lives: 0, keys: 0, ammo: 0, weapon: 0, owned: 0, credits: 0, map: 0,
+    tally: new Uint8Array(8), moveMask: 0, x: 0, y: 0, alive: inGame, ghost: inGame, index, cell: -1, safeX: 0, safeY: 0, invulnerable: 0 });
+  const p1 = crew.inGame[0] ? makePlayer(0, 0xb0, 0x68) : absent(0, false);
+  state.players = [p1];
+  if (crew.count === 2 || crew.inGame[1] || party) state.players.push(crew.inGame[1] && !demoMode ? makePlayer(1, 0xc0, 0x78) : absent(1, crew.inGame[1]));
   state.spawnPoints = [[0x28, 1], [0x29, 2], [0x34, 3]].flatMap(([code, type]) => { // 1000:48D3
     const points = []; for (let y = 8; y <= 0x5f8; y += 16) for (let x = 8; x <= 0x778; x += 16) if (x >= 16 && y >= 16 && codeAt(x, y) === code) points.push({ x, y, type, cooldown: 0 });
     return points;
@@ -360,7 +375,10 @@ function convertDecor(state, tileset, codeAt) {
 
 // 1000:7BAE, one player: up to 3 one-pixel steps per axis (4 on a lag frame), with a dead zone.
 export function followCamera(state) {
-  const target = state.players[0], camera = state.camera, steps = state.tables.moveSteps[state.lag * 16 + 3];
+  const camera = state.camera, steps = state.tables.moveSteps[state.lag * 16 + 3], [p1, p2] = state.players;
+  // 1000:7BBA: the player still in the game, or with two the midpoint (smaller + |difference| >> 1) of both records.
+  const mid = (a, b) => s16(Math.min(s16(a), s16(b)) + (Math.abs(s16(a) - s16(b)) >> 1));
+  const target = state.playerCount === 2 ? { x: mid(p1.x, p2.x), y: mid(p1.y, p2.y) } : p1.alive || !p2 ? p1 : p2;
   const maxX = ((MAP_WIDTH + 1) * 16 - 0x140) & 0xffff, maxY = (96 * 16 - 0xb0) & 0xffff;
   for (let i = 0; i < steps; i++) {
     let left = true;
@@ -385,7 +403,7 @@ export function mainLoopKeys(state, scancode, abortScancode, cheats = false) {
   const cycle = [0x82, 0x8b].indexOf(scancode); // release of 1 (player 1) or 0 (player 2): next owned weapon
   if (cycle >= 0) {
     const player = state.players[cycle];
-    if (player) {
+    if (player?.alive) { // [B096] / [B098]
       if (!(player.owned & 0xff)) { unsupported(state, 'Weapon cycle with no weapon owned (the original loops forever)'); return 'consumed'; }
       let bit = (player.weapon - 1) & 7;
       do bit = (bit + 1) & 7; while (!(player.owned & (1 << bit)));
@@ -421,7 +439,8 @@ export function nextStage(level, result, levelCode) {
 
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
 // (1000:21A6), restored by the next level's start (1000:1E15-1E6C). +69, the movement mask, is part of the save.
-export const newGamePlayer = () => ({ energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: 0x7f, credits: 0, map: 0, tally: new Uint8Array(8), moveMask: 0 });
+// Player 2 starts with only the first weapon (owned 0x01 at BE0D+.., 1000:188B-1932).
+export const newGamePlayer = (index = 0) => ({ energy: 0x40, lives: 4, keys: 0, ammo: 0x17f, weapon: 1, owned: index ? 0x01 : 0x7f, credits: 0, map: 0, tally: new Uint8Array(8), moveMask: 0 });
 export function savePlayer(player) {
   const { energy, lives, keys, ammo, weapon, owned, credits, map, moveMask } = player;
   return { energy, lives, keys, ammo, weapon, owned, credits, map, tally: Uint8Array.from(player.tally), moveMask };
@@ -460,10 +479,12 @@ export function stepFrame(state, input, ticks = 0, { demoEnd = false } = {}) {
   if (state.objectiveTriggered) { state.objectiveTriggered = false; startBoss(state); } // 1000:38C6
   // 1000:3935: while recording (cs:8716 = 1) the input byte goes into the buffer the attract demo plays (cs:8719); after
   // 0x400 bytes recording stops and 3956 writes the buffer to demo.dat.
-  if (state.demoRecord) { const r = state.demoRecord; r.buffer[r.index++] = input & 0xff; if (r.index >= 0x400) { state.demoSaved = r.buffer; state.demoRecord = null; } }
+  if (state.demoRecord) { const r = state.demoRecord; r.buffer[r.index++] = (Array.isArray(input) ? input[0] : input) & 0xff; if (r.index >= 0x400) { state.demoSaved = r.buffer; state.demoRecord = null; } }
   // 1000:3928: the demo's 1024th input byte ends the main loop before the player update (POP AX / RET at 39BC).
   if (demoEnd) { state.frame++; state.levelOver = 'demo'; return; }
-  if (!state.endSequence) for (const player of state.players) if (player.alive) updatePlayer(state, player, input);
+  // 3908 / 39D8: each player still in the game with its own input word; demo playback and recording are player 1's.
+  const inputs = Array.isArray(input) ? input : [input, 0];
+  if (!state.endSequence) state.players.forEach((player, i) => { if (player.alive && !player.ghost) updatePlayer(state, player, inputs[i] ?? 0); });
   for (const player of state.players) if (player.alive && s16(player.energy) <= 0) killPlayer(state, player);
   if (!state.endSequence) updateAliens(state);
   state.frame++;
@@ -676,7 +697,7 @@ function killPlayer(state, player) {
   player.energy = 0x40; player.lives = (player.lives - 1) & 0xff;
   setObjectType(state, player, 2); player.invulnerable = 0x4b;
   if (player.lives === 0xff) {
-    player.alive = false; state.playerCount--; setObjectType(state, player, 3);
+    player.alive = false; player.ghost = false; state.playerCount--; setObjectType(state, player, 3); // 3A00/3A47: [B096]/[B098] cleared, [B09A]-1
     if (player.cell >= 0 && player.cell <= 0x2d00) state.types[player.cell] &= 0x7fff;
   }
 }
@@ -711,13 +732,18 @@ function spawnAlien(state, slot) {
     object.flags0B |= 0x80; slot.object = object;
     if (object.type !== 7) object.frame = object.animBase = 0x49;
     if (slot.kind === 2) { object.energy = 8; object.frame = object.animBase = 0x8d; }
-    const target = state.players[0]; // one player: P1 (two-player alternation by cs:5119 parity not modelled)
-    if (state.playerCount !== 1) state.report('Alien targets with two players');
-    object.target = target; state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
+    object.target = alienTarget(state); state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
     return;
   }
 }
 
+// 1000:50B1-50EF (also 515E and the boss retarget): with two players in the game ([B09A] = 2) the target alternates by
+// the parity of cs:5119 (even: player 1); otherwise it is player 1, or player 2 once player 1 is out ([B096] = 0).
+export function alienTarget(state) {
+  const [p1, p2] = state.players;
+  if (state.playerCount === 2) return state.spawnCounter & 1 ? p2 : p1;
+  return p1.alive || !p2 ? p1 : p2;
+}
 // 1000:515E: a kind-2 alien at the armed cell; no cooldowns, no target alternation counter.
 function scriptedSpawn(state, slot) {
   const { x, y } = state.scriptedSpawn;
@@ -730,8 +756,7 @@ function scriptedSpawn(state, slot) {
   const object = allocObject(state, 6, x, y);
   if (object) {
     Object.assign(object, { walk: 0, facing: 1, energy: 8, frame: 0x8d, animBase: 0x8d });
-    object.flags0B |= 0x80; slot.object = object; object.target = state.players[0];
-    if (state.playerCount !== 1) state.report('Alien targets with two players');
+    object.flags0B |= 0x80; slot.object = object; object.target = alienTarget(state); // 515E: cs:5119 is not advanced
   }
   state.scriptedSpawn = null; state.scriptedSpawnTimer = -1;
 }
@@ -768,15 +793,16 @@ export function updateAliens(state) {
     const { x: cx, y: cy } = state.camera;
     if (a.x < cx - 0x40 || a.x > cx + 0x180 || a.y < cy - 0x40 || a.y > cy + 0xf0) { removeAlien(state, slot); continue; }
     let lastPlayer = null, died = false;
-    for (const p of state.players) { // 1000:4AE8 contact; the alien always dies on contact
-      lastPlayer = p;
+    for (const p of state.players) { // 1000:4ACB/4AE8 contact, player 1 if [B096], player 2 if [B098]; the alien always dies
+      if (!p.alive) continue;
+      lastPlayer = p; // 4BA9 credits a shot kill to the last player tested (BX), whoever fired
       if (a.x < p.x - 0x18 || a.x > p.x + 0x18 || a.y < p.y - 0x18 || a.y > p.y + 0x18 || !(a.frame & 1)) continue;
       if (!p.invulnerable) { p.energy = u16(p.energy - t.contactDamage[state.level + (slot.kind & 1)]); state.sounds.push(0x0f); }
       if (hitAlien(state, slot, 0x40, p)) { died = true; break; }
     }
     if (died) continue;
     const shot = state.shots.find(s => s.type && a.x >= s.x - 16 && a.x <= s.x + 16 && a.y >= s.y && a.y <= s.y + 0x20); // 1000:4987: y from shot y (+10h -10h) to +20h
-    if (shot) { const damage = t.shotDamage[shot.type]; shot.type = 0; if (hitAlien(state, slot, damage, lastPlayer)) continue; }
+    if (shot) { const damage = t.shotDamage[shot.type]; shot.type = 0; if (hitAlien(state, slot, damage, lastPlayer ?? state.players[0])) continue; } // nobody in the game: BX is not established
     if (s16(slot.timer) >= 0) slot.timer = s16(slot.timer - 1);
     else {
       slot.timer = s16((random(state) & 15) + 0x22 - 2 * slot.speed);
@@ -878,8 +904,7 @@ function bossMove(state, r) {
     let retarget = r.mode !== 0;
     if (!retarget) retarget = s16(random(state)) >= ({ 5: 0x5000, 8: 0x4000 }[state.level] ?? 0x6000);
     if (retarget) {
-      if (state.playerCount === 2) state.report('Boss target with two players');
-      r.target = state.players[0]; state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
+      r.target = alienTarget(state); state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
       r.mode = 0; r.countdown = state.level === 17 ? 0x80 : 0x60;
     } else { r.mode = (random(state) & 3) + 1; r.countdown = 0x80; }
   }

@@ -44,5 +44,7 @@ export function createKeyboard(bindings) {
     consumeScancode() { lastScancode = 0; },
     pressed: name => held.has(bindings[name]),
     inputByte() { let bits = 0; for (const c of held) bits |= bitForCode.get(c) || 0; return bits; },
+    // The same bit layout from another set of keys (the port's joystick-2 keys).
+    inputFrom(keys) { let bits = 0; for (const [name, bit] of Object.entries(BITS)) if (held.has(keys[name])) bits |= bit; return bits; },
   };
 }

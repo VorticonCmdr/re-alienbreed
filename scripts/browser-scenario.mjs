@@ -52,7 +52,7 @@ try {
   }
   const text = await page.evaluate(() => window.__alienBreed.display.frame.length);
   check('fire skips the intermission into the level', () => assert.ok(text > 0));
-  const newGame = await page.evaluate(() => ({ level: window.__alienBreed.level, players: window.__alienBreed.state.players.length }));
+  const newGame = await page.evaluate(() => ({ level: window.__alienBreed.level, players: window.__alienBreed.state.playerCount }));
   check('a new game starts at level index 1 (L0MZ), as 1000:17DE sets', () => assert.deepEqual(newGame, { level: 1, players: 1 }));
   // The remaining checks use level index 2 (LBMZ), the attract demo's level, whose start is verified against the original.
   await play('?level=2');
@@ -135,6 +135,20 @@ try {
   await page.locator('#dos').waitFor({ state: 'visible', timeout: 5000 });
   const dos = await page.evaluate(() => ({ text: document.getElementById('dos').textContent.trim().length, canvas: document.getElementById('screen').hidden, running: window.__alienBreed.running }));
   check('the exit cheat word ends the program with the text-mode message', () => assert.deepEqual([dos.text > 10, dos.canvas, dos.running], [true, true, false]));
+  // Two players: TWO on the title, player 2 on joystick 2 fed from W A S D (the page option); player 2 starts at camera
+  // + (0xC0, 0x78), moves with D while player 1 stays, and its half of the panel is drawn.
+  await page.goto(url); await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });
+  await page.selectOption('#p2-controls', 'keys'); await page.click('#play');
+  await page.waitForFunction(() => window.__alienBreed.phase === 'title', null, { timeout: 25000 }); await page.waitForTimeout(1500);
+  for (const key of ['ArrowUp', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowDown']) await tap(key, 80);
+  await tap('KeyZ');
+  for (let i = 0; i < 40 && !(await page.evaluate(() => window.__alienBreed.state?.frame > 10)); i++) await tap('KeyZ', 60);
+  const two = await page.evaluate(() => { const s = window.__alienBreed.state, [p1, p2] = s.players; return { count: s.playerCount, alive: [p1.alive, p2.alive], offset: [p2.x - p1.x, p2.y - p1.y], p1: [p1.x, p1.y], p2x: p2.x }; });
+  check('TWO starts a game with both players, player 2 next to player 1', () => { assert.equal(two.count, 2); assert.deepEqual(two.alive, [true, true]); assert.deepEqual(two.offset, [0x10, 0x10]); });
+  await page.keyboard.down('KeyD'); await page.waitForTimeout(400); await page.keyboard.up('KeyD'); await page.waitForTimeout(100);
+  const moved2 = await page.evaluate(() => { const [p1, p2] = window.__alienBreed.state.players; return { p1: [p1.x, p1.y], p2x: p2.x, panel: Array.from(window.__alienBreed.framebuffer.subarray(178 * 320 + 160 + 32, 178 * 320 + 160 + 96)) }; });
+  check('D moves player 2 (joystick 2), player 1 stays', () => { assert.ok(moved2.p2x > two.p2x, `${two.p2x} -> ${moved2.p2x}`); assert.deepEqual(moved2.p1, two.p1); });
+  check("player 2's energy bar is drawn in the right half of the panel", () => assert.ok(moved2.panel.every(v => v >= 0xf0)));
   // The optional code check of the unpatched program: the prompt in text mode, the answer from the console log.
   const logs = []; page.on('console', m => logs.push(m.text()));
   await page.goto(url); await page.locator('#play').waitFor({ state: 'visible', timeout: 15000 });

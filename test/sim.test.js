@@ -117,12 +117,13 @@ test('tallies at +63..+6A: ADD/DAA then ADC/DAA adjust only the low byte of each
 });
 test('1000:34E6 keys: releasing 1 cycles to the next owned weapon with sound 5; abort and unrelated keys', async () => {
   const { mainLoopKeys } = await import('../src/game/sim.js');
-  const player = { weapon: 1, owned: 0x7f, map: 0 }, state = { players: [player], sounds: [], diagnostics: [], strict: true };
+  const player = { weapon: 1, owned: 0x7f, map: 0, alive: true }, state = { players: [player], sounds: [], diagnostics: [], strict: true };
   assert.equal(mainLoopKeys(state, 0x82, 0x01), 'consumed'); assert.equal(player.weapon, 2); assert.deepEqual(state.sounds, [5]);
   player.weapon = 7; mainLoopKeys(state, 0x82, 0x01); assert.equal(player.weapon, 1, 'bit 7 is not owned, wraps to weapon 1');
   player.owned = 0x05; player.weapon = 1; mainLoopKeys(state, 0x82, 0x01); assert.equal(player.weapon, 3);
   assert.equal(mainLoopKeys(state, 0x02, 0x01), null, 'the press itself does nothing');
   assert.equal(mainLoopKeys(state, 0x01, 0x01), 'abort'); assert.equal(mainLoopKeys(state, 0x8b, 0x01), 'consumed', 'player 2 key without player 2');
+  const out = { weapon: 1, owned: 0x7f, alive: false }; state.players.push(out); mainLoopKeys(state, 0x8b, 0x01); assert.equal(out.weapon, 1, 'only for a player still in the game ([B098])'); state.players.pop();
   const { mapRequested } = await import('../src/game/sim.js');
   assert.equal(mainLoopKeys(state, 0x32, 0x01), null, 'M is checked after the frame');
   state.endSequence = 0; player.alive = true;

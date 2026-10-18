@@ -52,10 +52,10 @@ async function loadCommon(source) {
     const buffer = audio.createBuffer(1, samples.length, sampleRate); buffer.copyToChannel(samples, 0); return buffer;
   }));
   effects?.stop(); effects = createEffectPlayer(audio, audio.destination, buffers, samplePriorities(exe, names.length));
-  keyboard = createKeyboard(bindingsFromSetup(setup));
+  keyboard = createKeyboard(bindingsFromSetup(setup)); joystick = [0, 0]; joyTicks = 0;
   const frames = new Map(), descriptor = n => { if (!frames.has(n)) frames.set(n, frameDescriptor(exe, n)); return frames.get(n); };
   assets = {
-    source, exe, tables: readTables(exe), descriptor, abortScancode: setup[0x65], mapNames: levelMapNames(exe),
+    source, exe, tables: readTables(exe), descriptor, setup, abortScancode: setup[0x65], mapNames: levelMapNames(exe),
     players: [await sprites('PLAYER1.EHF'), await sprites('PLAYER2.EHF')], explosions: [await sprites('BOOM_NEW.EHF')],
     hud: createHud(decodeVga(decompressLzhuf(await source.read('PANEL.VHF'))).pixels),
     font: cutFont(decompressLzhuf(await source.read(exe.string(0x2041, 0x9a8c + 8))).subarray(0, 64000)), text: createTextState(),
@@ -96,10 +96,10 @@ async function loadLevel(level, carried, demoMode = 0) {
   // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
   const aliens = decodePlanar(decompressLzhuf(await source.read(alienSheetName(exe, level)))).pixels;
   const sheets = { 0xb409: assets.players, 0xadd2: assets.explosions, 0xb0b4: [aliens] }, levelAliens = [aliens];
-  const state = startLevel({ tables, map, level, tileset: levelTileset(exe, level), strict: !$('preview').checked, saved: carried.player, globals: carried.globals, rngSeed: carried.rngSeed, demoMode });
-  state.playerCount = assets.options.players + 1; state.shareCredits = !!assets.options.share; // [B09A] from cs:1117, cs:1118
-  if (state.playerCount === 2) state.report('Two players');
+  const state = startLevel({ tables, map, level, tileset: levelTileset(exe, level), strict: !$('preview').checked, party: carried.party, globals: carried.globals, rngSeed: carried.rngSeed, demoMode });
+  state.shareCredits = !!assets.options.share; // cs:1118
   game = { level, state, tileStore, dac, redDac, levelDac: dac, levelAliens, alienPalette: null, sheets, hud: assets.hud, descriptor: assets.descriptor, tables, framebuffer: createFramebuffer() };
+  redrawPanels(state);
 }
 
 function renderGame() {
@@ -111,10 +111,47 @@ function renderGame() {
   if (view.timerDigits !== null) [view.timerDigits >> 4, view.timerDigits & 15].forEach((digit, i) => {
     const d = descriptor(0xd3 + digit); drawSprite(fb, d, sheets[d.sheetVariable], 32 + 16 * i + d.adjustX, 32 + d.adjustY, false, 0, PLAYFIELD);
   });
-  for (const p of state.players) if (p.alive) drawHud(hud, p);
+  state.players.forEach((p, i) => { if (p.alive && !p.ghost) drawHud(hud, p, i * 0xa0); }); // 18B2:17B9: players still in the game
   blitPanel(fb, hud);
   display.frame.set(fb);
 }
+// 18B2:17F6 / 17FA at the level start, after the Intex or the map and when a boss starts or dies: both halves of the panel
+// from both records, whether or not the player is in the game (a missing player 2 shows the cleared record).
+const NOBODY = { energy: 0, lives: 0, ammo: 0, keys: 0 };
+function redrawPanels(state) {
+  [state.players[0], state.players[1] ?? NOBODY].forEach((p, i) => {
+    if ((p.lives & 0xff) === 0xff) state.report('Panel redraw for a player who is out (lives 0xFF; 18B2:292C not read)');
+    drawHud(game.hud, p, i * 0xa0);
+  });
+}
+// SETUP.DAT byte 0 ([E770]): player 1 on the keyboard if non-zero, player 2 as well if 2; byte 2 ([E772]): bit 0 puts
+// player 1 on joystick 1, bit 1 player 2 on joystick 2 (1000:1779-17AA). A player without a controller reads the word at
+// DS:0000 ([B094] = 0), the first type word of the map. The page option can give player 2 joystick 2, fed from a second
+// key set or a gamepad (a port addition: the original reads a PC joystick there).
+let joystick = [0, 0], joyTicks = 0;
+const P2_KEYS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', fire: 'KeyF', action: 'KeyG' };
+function controllers() {
+  const s = assets.setup, choice = $('p2-controls').value;
+  return [s[2] & 1 ? 'joystick' : s[0] ? 'keys' : 'none', choice !== 'setup' ? 'joystick' : s[2] & 2 ? 'joystick' : s[0] === 2 ? 'keys' : 'none'];
+}
+function inputFor(index) {
+  const c = controllers()[index];
+  return c === 'keys' ? keyboard.inputByte() : c === 'joystick' ? joystick[index] : game?.state ? game.state.types[0] : 0;
+}
+const anyInput = () => keyboard.inputByte() | joystick[0] | joystick[1]; // [B42E] for the menus
+const leadInput = players => () => inputFor(players[0] ? 0 : 1); // 45EF-4757: player 1's input, or player 2's once player 1 is out
+// 1000:782E, every 4th INT 8 tick: the joystick words. Gamepads use the standard mapping (d-pad or left stick, A fires, B acts).
+function pollJoysticks() {
+  const pads = [...(navigator.getGamepads?.() ?? [])].filter(Boolean), word = pad => {
+    if (!pad) return 0; const b = i => pad.buttons[i]?.pressed, [ax, ay] = pad.axes;
+    return (b(15) || ax > 0.5 ? 1 : 0) | (b(14) || ax < -0.5 ? 2 : 0) | (b(13) || ay > 0.5 ? 4 : 0) | (b(12) || ay < -0.5 ? 8 : 0) | (b(0) ? 0x10 : 0) | (b(1) ? 0x20 : 0);
+  };
+  const [c1] = controllers(), choice = $('p2-controls').value;
+  joystick[0] = c1 === 'joystick' ? word(pads[0]) : 0;
+  joystick[1] = choice === 'keys' ? keyboard.inputFrom(P2_KEYS) : word(pads[c1 === 'joystick' ? 1 : 0]);
+}
+const partyOf = state => ({ count: state.playerCount, inGame: state.players.map(p => p.alive), saved: state.players.map(savePlayer) });
+const newParty = () => ({ count: assets.options.players + 1, inGame: [true, assets.options.players === 1], saved: [null, null] }); // 1000:1951
 // 1000:6030 copies a boss palette to bank 0xC0 and swaps the alien sheet; 205F restores both after the boss.
 function bossPalette(state) {
   game.alienPalette = state.alienPalette;
@@ -123,6 +160,7 @@ function bossPalette(state) {
   game.dac = dac; game.redDac = redAlertPalette(dac);
   game.sheets[0xb0b4] = state.alienSheet !== null ? [assets.bossSheets[state.alienSheet]] : game.levelAliens;
   display.dac.set(state.redAlert ? game.redDac : game.dac);
+  redrawPanels(state);
 }
 function present() {
   image.data.set(toRgba(display.frame, dacToRgb(display.dac))); context.putImageData(image, 0, 0);
@@ -157,7 +195,7 @@ function* program(devLevel) {
   phase = 'intro'; yield* intro({ display, logos: assets.logos, playSample: () => effects.playBuffer(assets.logoSample) }); // 1000:0761-0767
   phase = 'title'; music.start('title', assets.songs.title, { stopFirst: false }); // 1000:0BAD
   for (;;) {
-    const input = () => keyboard.inputByte();
+    const input = anyInput;
     const choice = yield* titleLoop({ exe: assets.exe, display, font: assets.font, text: assets.text, title: assets.titlePicture, story: assets.storyPicture,
       input, ticks: () => retrace.ticks, options: assets.options, report: strictReport });
     lastResult = yield* gameSession(choice === 'start' ? NEW_GAME_LEVEL : DEMO_LEVEL, choice === 'demo');
@@ -172,7 +210,7 @@ let lastResult = null, phase = null, typedChars = null; // typedChars: INT 21h/0
 function* terminal(state, player, kind) {
   inGame = false;
   const common = { exe: assets.exe, display, font: assets.font, text: assets.text, memory: assets.intexMemory, player, state,
-    input: () => keyboard.inputByte(), ticks: () => retrace.ticks, report: state.report };
+    input: () => inputFor(player.index ?? 0), ticks: () => retrace.ticks, report: state.report }; // [817E]: the owner's input word
   if (kind === 'intex') {
     yield* idle(intexSession({ ...common, pictures: { computer: assets.computerPicture }, weaponSheet: assets.weaponSheet, descriptor: assets.descriptor,
       scancode: () => keyboard.lastScancode, consumeScancode: () => keyboard.consumeScancode(), sound: id => effects.play(id), exitProgram: () => { throw new ProgramExit(); },
@@ -182,11 +220,12 @@ function* terminal(state, player, kind) {
   state.lag = !state.demoMode && !state.demoRecord && state.frameTicks >= 5 ? 1 : 0; state.frameTicks = 0;
   inGame = true;
   for (let i = 0; i < 2; i++) { // 37D6 twice
-    state.sounds = []; stepFrame(state, keyboard.inputByte(), retrace.ticks);
+    state.sounds = []; stepFrame(state, [inputFor(0), inputFor(1)], retrace.ticks);
     for (const id of state.sounds) effects.play(id);
     renderGame(); yield;
   }
   inGame = false;
+  redrawPanels(state);
   yield* idle(fadeIn(display, state.redAlert ? game.redDac : game.dac), state);
   if (kind === 'intex') { music.start('ingame', assets.songs.ingame, { stopFirst: false }); state.music = 'ingame'; state.musicStop = false; } // 2402
   state.countdownFrozen = false; inGame = true;
@@ -194,19 +233,19 @@ function* terminal(state, player, kind) {
 const DEMO_LEVEL = 2;
 
 function* gameSession(firstLevel, demo) {
-  let carried = { player: null, globals: null, rngSeed: newGameSeed() };
+  let carried = { party: newParty(), globals: null, rngSeed: newGameSeed() };
   for (let level = firstLevel; ;) {
     music.stop(); // 1000:1949 (2261): fn 7, which also sets the PIT back to 0x438C
     const previous = game?.state;
     if (!demo && (level !== firstLevel || level === NEW_GAME_LEVEL)) { // 1000:198E, not in demo mode
       const picture = yield loadPicture(intermissionPicture(assets.exe, level));
       yield* idle(intermission(level, { exe: assets.exe, display, font: assets.font, text: assets.text, picture, deckman: assets.deckman, tables: assets.tables,
-        descriptor: assets.descriptor, input: () => keyboard.inputByte(), report: message => previous ? previous.report?.(message) : strictReport(message), exitTaken: previous?.exitTaken }), previous);
+        descriptor: assets.descriptor, input: leadInput(carried.party.inGame), report: message => previous ? previous.report?.(message) : strictReport(message), exitTaken: previous?.exitTaken }), previous);
     }
     yield loadLevel(level, carried, demo ? 2 : 0);
     let demoFrame = 0;
     const state = game.state;
-    stepFrame(state, 0, retrace.ticks); yield; stepFrame(state, 0, retrace.ticks); yield; // two warm-up passes of 37D6 (1000:1F8D)
+    stepFrame(state, [0, inputFor(1)], retrace.ticks); yield; stepFrame(state, [0, inputFor(1)], retrace.ticks); yield; // two warm-up passes of 37D6 (1000:1F8D)
     renderGame(); yield* idle(fadeIn(display, game.dac), state); // 1000:1FB9
     music.start('ingame', assets.songs.ingame, { stopFirst: false }); // 1000:1FBE (2402); the driver sets 120 Hz
     inGame = true;
@@ -218,8 +257,8 @@ function* gameSession(firstLevel, demo) {
       for (const id of state.sounds) effects.play(id);
       if (key === 'previous') { result = 'previous'; break; }
       if (key === 'abort' || state.levelOver) { result = key === 'abort' ? 'aborted' : state.levelOver; break; }
-      if (demo) { const end = demoFrame === 0x3ff; stepFrame(state, assets.demo[demoFrame++], retrace.ticks, { demoEnd: end }); }
-      else stepFrame(state, keyboard.inputByte(), retrace.ticks);
+      if (demo) { const end = demoFrame === 0x3ff; stepFrame(state, [assets.demo[demoFrame++], inputFor(1)], retrace.ticks, { demoEnd: end }); }
+      else stepFrame(state, [inputFor(0), inputFor(1)], retrace.ticks);
       for (const id of state.sounds) effects.play(id);
       // 1000:5FBD starts the alarm song without stopping the in-game one (docs/port/avmfm.md 2.4); the boss stops first.
       if (state.music !== music.song) { music.start(state.music, assets.songs[state.music], { stopFirst: state.musicStop }); state.musicStop = false; }
@@ -239,7 +278,7 @@ function* gameSession(firstLevel, demo) {
     if (result === 'previous' && state.demoRecord) throw new UnsupportedPath('Level change while recording a demo (1000:1E9D skips the player restore)', {});
     if (result === 'previous') { // 1000:3526: back one level; the fade runs with the music still playing
       yield* idle(fadeOut(display), state);
-      carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
+      carried = { party: partyOf(state), globals: carriedGlobals(state) };
       if (next.level < 0) throw new UnsupportedPath('Level index below 0', {});
       level = next.level; continue;
     }
@@ -247,10 +286,10 @@ function* gameSession(firstLevel, demo) {
     music.stop(); // 1000:1FDB
     yield* idle(fadeOut(display), state); // 1000:1FDE
     if (next.kind === 'level') {
-      carried = { player: savePlayer(state.players[0]), globals: carriedGlobals(state) };
+      carried = { party: partyOf(state), globals: carriedGlobals(state) };
       level = next.level; continue;
     }
-    const input = () => keyboard.inputByte();
+    const input = leadInput(state.players.map(p => p.alive));
     if (next.kind === 'ending') { // 1000:41A2
       const pictures = []; for (const name of endingPictures(assets.exe)) pictures.push(yield loadPicture(name));
       yield* idle(ending({ exe: assets.exe, display, font: assets.font, text: assets.text, pictures, input, report: state.report }), state);
@@ -303,6 +342,7 @@ function tick(now) {
   try {
     while (accumulator >= FRAME_MS && !waiting) {
       retrace = advanceRetrace(timer, inGame ? GAME_OPEN_SHARE : 1);
+      if (assets) for (joyTicks += retrace.ticks; joyTicks >= 4; joyTicks -= 4) pollJoysticks(); // [B425] (cs:3AEB / 7871 gating not modelled)
       const step = session.next(resumeWith); resumeWith = undefined;
       if (opl) renderMusic();
       accumulator -= FRAME_MS;
