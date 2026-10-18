@@ -1,6 +1,6 @@
 # Port status
 
-Updated 2026-10-18 (title, all levels, Intex, sound effects, FM music). Evidence for each claim: [evidence.md](evidence.md);
+Updated 2026-10-18 (title, all levels, Intex, sound effects, FM music; generator, death and countdown runs). Evidence for each claim: [evidence.md](evidence.md);
 music driver: [avmfm.md](avmfm.md); Intex: [intex.md](intex.md). Scenarios: [scenarios/](scenarios/).
 
 ## Supported build
@@ -42,12 +42,14 @@ PIT rates the driver programs, with the alarm song's start-without-stop quirk.
 | --- | --- |
 | `npm test` | Unit tests; tests needing the original files skip without them. |
 | `npm run verify` | Requires the original files. Every test with skipping forbidden, then the browser scenario in headless Chrome (intermission, new game at index 1, level index 2 movement, firing, sound, aliens, music at 120 Hz). |
-| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks, and the level 5 boss fight (boss, player, RNG, records) in a partial restore: one unfitted point with a negative control and one point fitted to a 5-frame offset. |
+| `npm run verify:runtime` | Requires local DOSBox captures in `.work/captures` (never committed). Compares the FM driver's complete state with the original after 1000 title and 3000 in-game ticks; the level 5 boss fight (boss, player, RNG, records) in a partial restore: one unfitted point with a negative control and one point fitted to a 5-frame offset; and planned inputs on level index 2 ([scenarios/events-lbmz.json](scenarios/events-lbmz.json)): 95 frame ends, a death and respawn, a generator kill and 12 countdown values, each with a one-step or one-tick negative control. |
 
 Verified levels, from strongest to weakest:
 
 - **Independent runtime**: the music driver against the original's memory; the level 5 boss at one unfitted and one
-  fitted point (above).
+  fitted point (above); a player death and respawn, alien contact, shooting doors and aliens, alien hatching and
+  movement on level index 2 (unmodified start); a generator kill, the self-destruct start and the countdown in INT 8
+  ticks (start with three generators counted, a partial restore).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
   checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`).
@@ -78,4 +80,5 @@ Verified levels, from strongest to weakest:
 ## Next milestone
 
 Original-run comparisons for the remaining new paths (an Intex purchase, a level transition with carried state, the
-intermission timing, the bosses of levels 8 and 17), the start-up screens, and two players.
+intermission timing, the bosses of levels 8 and 17, the countdown's real-time rate outside demo playback), the start-up
+screens, and two players.
