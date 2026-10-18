@@ -274,9 +274,10 @@ for (const [name, song, file] of CAPTURES) {
   until(4, () => memory.choice === 5); press(0x10); run(400);
   for (const ch of word) { scan = toScan.get(ch.charCodeAt(0)); run(3); scan = 0; run(3); }
   until(8, () => memory.menu === 7); press(0x10); run(600);
-  // The original then fired 13 shots (tally +63 = 0x13): one with weapon 1 before the Intex opened, twelve with weapon 3.
+  // The original then fired 13 shots (tally +63 = 0x13). The split is INFERRED (no snapshot between them): one with weapon 1
+  // before the Intex opened (a fire press while it was opening), twelve with weapon 3; it is the only split giving 486.
   const shots = save.tally[0] >> 4 & 15 ? (save.tally[0] >> 4) * 10 + (save.tally[0] & 15) : save.tally[0];
-  check('Intex purchases: weapon 3 (BCD borrow), keys, a refused ammo; credits, weapons, keys, lives, map, energy and the cheat flag match', () => {
+  check('Intex purchases: weapon 3 (BCD borrow), keys, a refused ammo; credits, weapons, keys, lives, map, energy and the cheat flag match; ammo under an inferred split of the shots (1 with weapon 1, 12 with weapon 3)', () => {
     assert.ok(done); assert.ok(refused); assert.equal(memory.cheats, true);
     assert.deepEqual([player.credits, player.owned, player.weapon, player.keys, player.lives, player.map, player.energy], [save.credits, save.owned, save.weapon, save.keys, save.lives, save.map, save.energy]);
     assert.equal(player.ammo - tables.ammoCost[1] - (shots - 1) * tables.ammoCost[3], save.ammo, 'ammo +0x80, then the shots');

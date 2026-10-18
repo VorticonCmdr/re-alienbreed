@@ -62,3 +62,14 @@ test('a player out of lives: the freed record saves as zeros and the next level 
   const next = await level2(party);
   assert.deepEqual([next.players[0].credits, next.players[1].alive, next.players[1].active, next.playerCount], [0x1234, false, false, 1]);
 });
+
+test('a level change during a recording (1E9D): player 1 restored, player 2 counted in but not created, out after one pass', { skip: missing }, async () => {
+  const exe = await openExe(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL('LBMZ.HUF', game)))));
+  const saved = { ...newGamePlayer(0), credits: 0x4321 };
+  const s = startLevel({ tables: readTables(exe), map, level: 2, tileset: levelTileset(exe, 2), recording: true, party: { count: 2, inGame: [true, true], saved: [saved, null] } });
+  assert.equal(s.players[0].credits, 0x4321, 'player 1 restored as usual');
+  assert.deepEqual([s.players[1].active, s.players[1].alive, s.playerCount], [false, true, 2], 'player 2 still counted in, no record');
+  stepFrame(s, [0, 0], 0);
+  assert.deepEqual([s.players[1].alive, s.playerCount, s.players[1].lives], [false, 1, 0xff], 'its death check takes it out for the rest of the game');
+});
