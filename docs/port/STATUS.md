@@ -52,6 +52,8 @@ Verified levels, from strongest to weakest:
   fitted point (above); a player death and respawn, alien contact, shooting doors and aliens, alien hatching and
   movement on level index 2 (unmodified start); a generator kill, the self-destruct start and the countdown in INT 8
   ticks (start with three generators counted, a partial restore).
+  Shots above the map on level index 11: the word the original reads 1-8 pixels above matches the port's model
+  (scenario [shot-above-map.json](scenarios/shot-above-map.json); 5 pixels above is not modelled).
 - **Closed-loop replay** (`test/demo.test.js`, `scenarios/demo-lbmz.json`): `DEMO.DAT` reproduces unfitted original
   checkpoints at frames 100-900 (player, camera, aliens, objects, RNG). Negative control: one dropped input byte.
 - **Browser acceptance** (`scripts/browser-scenario.mjs`).
@@ -63,8 +65,8 @@ Verified levels, from strongest to weakest:
 
 ## Known limitations
 
-- Not implemented (strict stop): two players, shots more than 3 pixels above the map, a level change during a demo
-  recording. The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
+- Not implemented (strict stop): two players, a level change during a demo recording, and shot probes outside the
+  map that read memory the port does not model (5 pixels above the map, an active object record). The full list of open, unchecked and approximated items is in [REMAINING.md](REMAINING.md).
 - Timing model (`src/game/timing.js`): one game update per 70.086 Hz retrace; the lag flag follows the INT 8 count, so
   it is set only after pauses (fades, the Intex). In-game the PIT runs
   at 120 Hz; interrupts arriving while the frame has them disabled are collapsed and do not tick the music. The share of

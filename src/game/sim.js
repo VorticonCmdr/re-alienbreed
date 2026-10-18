@@ -35,6 +35,8 @@ export function readTables(exe) {
     fadingShotFrames: Array.from({ length: 7 }, (_, i) => exe.u16(CODE, 0x5682 + 2 * i)),
     codeWord: offset => exe.u16(CODE, offset & 0xffff), // for reads the original makes past the end of a table
     dataWord: offset => exe.u16(DATA, offset & 0xffff),
+    dataByte: offset => exe.u8(DATA, offset & 0xffff),
+    segmentByte: (segment, offset) => exe.u8(segment, offset & 0xffff),
     animList(offset) { // DS word lists for the tile animation ticker 1000:8606
       if (!lists.has(offset)) {
         const words = [];
@@ -506,12 +508,54 @@ function createShot(state, player, facing, type, x, y) {
   tallyIncrement(player.tally, TALLY.shots);
 }
 
-// 1000:3C08 for a shot: a point 1-3 pixels above the map reads the row table's preceding words, which are zero
-// bytes in the executable (2EF5:1CA2-1CA7), so it tests row 0. Higher points read unrelated memory (reported).
-function shotCell(state, x, y) {
-  const py = y - 16;
-  if (py < 0 && py >= -3 && x - 16 >= 0) return cellAt(state, x, 16);
-  return cellAt(state, x, y);
+// 1000:3C08 for a shot: DI = row word [2EF5:1CA8 + 2(y-16)] + column word [2EF5:3CA8 + 2(x-16)], then the code is the
+// byte at DS:DI (the type map starts at DS:0). The level set-up 2EF5:0000 fills the row table with (py >> 4) * 0xF0 and
+// the column table with (px >> 4) * 2, 16 entries per cell, and stores width 0x78, height 0x60 and stride 0xF0 at
+// 1CA2/1CA4/1CA6, just before the row table; further up are code bytes of segment 2EF5 (1C9D holds a segment the DOS
+// loader relocates). Left of the map the column table reads the row table's last entries (0xEF10).
+const LOAD_SEGMENT = 0x01f5; // where DOSBox loads ALIEN.EXE (PSP 01E5); a real PC may differ
+const ABOVE = [0xf0, 0x60, 0x78]; // 2EF5:1CA6, 1CA4, 1CA2 for 1, 2, 3 pixels above the map
+function rowWord(state, py) {
+  if (py >= 0) return py < 0x1000 ? ((py >> 4) * 0xf0) & 0xffff : null;
+  if (py >= -3) return ABOVE[-py - 1];
+  if (py < -19) return null; // no shot moves faster than 19 pixels a frame
+  const at = 0x1ca8 + 2 * py, byte = o => o === 0x1c9d || o === 0x1c9e
+    ? ((state.tables.segmentByte(0x2ef5, 0x1c9d) | state.tables.segmentByte(0x2ef5, 0x1c9e) << 8) + LOAD_SEGMENT) >> (o === 0x1c9e ? 8 : 0) & 0xff
+    : state.tables.segmentByte(0x2ef5, o);
+  return byte(at) | byte(at + 1) << 8;
+}
+const columnWord = px => px >= 0 ? (px < 0x1000 ? (px >> 4) * 2 : null) : px >= -0x1000 ? (((0x1000 + px) >> 4) * 0xf0) & 0xffff : null;
+// DS areas a shot outside the map can reach that held the executable's bytes at three points of two games (level starts
+// of index 2 and 1, frame 900 of the attract demo): F79C, 9C8A, 9D88, 8826, 669D, 8A05 and FF9C, 240 bytes each.
+const STATIC_DS = [0xf79c, 0x9c8a, 0x9d88, 0x8826, 0x669d, 0x8a05, 0xff9c].map(a => [a, a + 0xf0]);
+const RECORDS = 0xbe1c, RECORD_SIZE = 0x6c;
+// The word 3C08 reads at DS:DI ([AF82]), or null where this port does not model the memory.
+function dsWord(state, di) {
+  const byte = o => {
+    o &= 0xffff;
+    if (o < MAP_CELLS * 2) { const word = state.types[o >> 1]; return (o & 1 ? word >> 8 : word) & 0xff; }
+    if (STATIC_DS.some(([from, to]) => o >= from && o < to)) return state.tables.dataByte(o);
+    const record = Math.floor((o - RECORDS) / RECORD_SIZE);
+    if (o >= RECORDS && record < state.objects.length && !state.objects[record].active) return 0; // freed: 759C cleared it
+    return null;
+  };
+  const low = byte(di), high = byte(di + 1);
+  return low === null || high === null ? null : low | high << 8;
+}
+// The address 3C08 reads for a shot's probe point, with the word found there (null: not modelled).
+export function shotProbe(state, x, y) {
+  const row = rowWord(state, y - 16), column = columnWord(x - 16);
+  if (row === null || column === null) return { di: null, word: null };
+  const di = (row + column) & 0xffff;
+  return { di, word: dsWord(state, di) };
+}
+function shotCode(state, x, y) {
+  const { di, word } = shotProbe(state, x, y);
+  if (word === null) {
+    unsupported(state, di === null ? `Shot probe at (${x}, ${y}) beyond the modelled tables` : `Shot probe at (${x}, ${y}) reads DS:${di.toString(16).toUpperCase()}, which this port does not model`);
+    return { code: 0, index: -1 };
+  }
+  return { code: word & 0xff, index: di < MAP_CELLS * 2 && !(di & 1) ? di >> 1 : -1 };
 }
 
 // 1000:5812: shots damage closed doors whose box contains (x, y + 0x18); the shot is not consumed.
@@ -540,7 +584,7 @@ export function updateShots(state) {
     shot.x = s16(shot.x + shot.vx); shot.y = s16(shot.y + shot.vy);
     if (!(shot.direction & 15)) unsupported(state, 'Shot without a direction');
     shootDoors(state, shot.x, s16(shot.y + 0x18), t.shotDamage[shot.type]);
-    const index = shotCell(state, shot.x, s16(shot.y + 0x10)), code = state.types[index] & 0xff;
+    const { code, index } = shotCode(state, shot.x, s16(shot.y + 0x10));
     if (WALLS.has(code)) {
       if (code >= 0x2a && code <= 0x2d) hitGenerator(state, code - 0x2a);
       if (s16(state.generatorsDestroyed) >= 4) startSelfDestruct(state);
@@ -548,7 +592,8 @@ export function updateShots(state) {
       shot.type = 0; createEffect(state, 5, shot.x, s16(shot.y + 8));
       continue;
     }
-    if (code === 0x12 || code === 0x13) destroyWall(state, shot.x, s16(shot.y + 0x10), code === 0x12 ? 0x20 : -0x20);
+    if ((code === 0x12 || code === 0x13) && index < 0) unsupported(state, 'Destructible-wall code read outside the map by a shot');
+    else if (code === 0x12 || code === 0x13) destroyWall(state, shot.x, s16(shot.y + 0x10), code === 0x12 ? 0x20 : -0x20);
   }
 }
 

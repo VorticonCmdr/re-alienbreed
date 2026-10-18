@@ -1,0 +1,93 @@
+{
+ "scenario": "shot-above-map",
+ "description": "Shots fired upward from row 1 of level index 11 (PCMAP3.HUF, columns 20-31 have open row-0 cells) fly above the map for one frame. The original is stopped right after each of these probes and the word it read is compared with the port model.",
+ "verify": "npm run verify:runtime",
+ "build": {
+  "ALIEN.EXE": "0787a2ca63e712ef1e2278fd5a78d9a0ea1e9ca0197398ab9e4cb684b067e0c7"
+ },
+ "emulator": {
+  "engine": "dosbox-automation 0.84.0-vc1 (f6d9b), dosbox-mcp bridge 0.1.1",
+  "loadSegment": "01F5 (PSP 01E5). The word at 2EF5:1C9D is a relocated segment, so the reads 5 and 6 pixels above the map depend on it"
+ },
+ "recipe": [
+  "Fresh instance, mount C: = .work/dos, type C:, ALIEN and three keys at the passcode prompt.",
+  "Execute breakpoint at live 01F5:1830 with cs:[8716] = 2 (attract demo): set AX = 11, so the demo plays level index 11.",
+  "Execute breakpoint at live 01F5:1F8D with cs:[8716] = 2: write the inputs to 01F5:8719 and player 1 x, y (1236:BE1C) = 424 and the run start y (40, 39 or 38).",
+  "Execute breakpoint at live 01F5:539E (after CALL 3C08 in the shot update) with DX < 16: BX is the probe x, DX the probe y (shot y + 0x10), [AF82] the word read from DS:DI."
+ ],
+ "runs": {
+  "y40": {
+   "restore": [
+    {
+     "address": "1236:BE1C",
+     "value": [424,40]
+    },
+    {
+     "address": "1236:B0B2 via AX at 01F5:1830",
+     "value": 11
+    }
+   ],
+   "probesAbove": [
+    1,
+    4,
+    7
+   ]
+  },
+  "y39": {
+   "restore": [
+    {
+     "address": "1236:BE1C",
+     "value": [424,39]
+    },
+    {
+     "address": "1236:B0B2 via AX at 01F5:1830",
+     "value": 11
+    }
+   ],
+   "probesAbove": [
+    2,
+    5,
+    8
+   ]
+  },
+  "y38": {
+   "restore": [
+    {
+     "address": "1236:BE1C",
+     "value": [424,38]
+    },
+    {
+     "address": "1236:B0B2 via AX at 01F5:1830",
+     "value": 11
+    }
+   ],
+   "probesAbove": [3,6]
+  }
+ },
+ "inputs": {
+  "sha256": "bd150fb6572d0abc70359130f34269286698bf43aa2c93eba045255aa9d5f708",
+  "bytes": 1024,
+  "rle": [
+   [0,600],
+   [8,1],
+   [16,40],
+   [8,1],
+   [16,40],
+   [8,1],
+   [16,40],
+   [0,301]
+  ]
+ },
+ "alignment": {
+  "rule": "A stop in the pass with [AF84] = N is compared with the port state after N - 2 steps (the shot update runs before that pass changes the map).",
+  "negativeControl": "the earlier rule (1-3 pixels above read row 0) must differ"
+ },
+ "captures": {
+  "location": ".work/captures (local only)",
+  "files": [
+   "shot-above-y40.json",
+   "shot-above-y39.json",
+   "shot-above-y38.json"
+  ]
+ }
+}

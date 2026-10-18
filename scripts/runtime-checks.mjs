@@ -7,7 +7,7 @@ import { createFmDriver, createMusic } from '../src/game/fmdriver.js';
 
 const root = new URL('../', import.meta.url), game = new URL('game/', root);
 const required = ['.work/captures/avmfm-title-1000.json', '.work/captures/avmfm-ingame-3000.json', '.work/captures/boss5-run2-hit5.json', '.work/captures/boss5-run2-hit115.json',
-  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames'].map(n => `.work/captures/${n}.json`)];
+  ...['death-runA', 'death-runA-frames', 'gen-countdown-runB', 'alien-runB-frames', 'shot-above-y40', 'shot-above-y39', 'shot-above-y38'].map(n => `.work/captures/${n}.json`)];
 const missing = required.filter(p => !existsSync(new URL(p, root)));
 if (missing.length) { console.error(`Missing runtime captures: ${missing.join(', ')}`); process.exit(2); }
 let checks = 0;
@@ -164,5 +164,36 @@ for (const [name, song, file] of CAPTURES) {
   const want = runB.countdown.slice(1).map((r, i) => i ? r.slice(1, 6) : r.slice(0, 6));
   check(`countdown run B: ${want.length} values from the start to 0x49 (seconds, accumulator, cycle counter), in INT 8 ticks`, () => assert.deepEqual(countdown(0).rows, want));
   check('countdown run B: starting one tick later is detected', () => assert.notDeepEqual(countdown(1).rows, want));
+}
+// Shots above the map on level index 11 (docs/port/scenarios/shot-above-map.json): the word 3C08 read ([AF82]) against the
+// port's model at the same probe point, 1-8 pixels above the map. The panel buffer read 5 pixels above is not modelled.
+{
+  const { createHash } = await import('node:crypto');
+  const { exeView } = await import('../src/game/exe.js');
+  const { decodeMap, levelMapNames } = await import('../src/game/level.js');
+  const { decompressLzhuf } = await import('../src/lzhuf.js');
+  const { readTables, startLevel, levelTileset, stepFrame, shotProbe } = await import('../src/game/sim.js');
+  const manifest = JSON.parse(await readFile(new URL('docs/port/scenarios/shot-above-map.json', root), 'utf8'));
+  const exe = exeView(new Uint8Array(await readFile(new URL('ALIEN.EXE', game))));
+  const map = decodeMap(decompressLzhuf(new Uint8Array(await readFile(new URL(levelMapNames(exe)[11].toUpperCase(), game)))));
+  const input = Uint8Array.from(manifest.inputs.rle.flatMap(([v, n]) => Array(n).fill(v)));
+  assert.equal(createHash('sha256').update(input).digest('hex'), manifest.inputs.sha256, 'manifest inputs');
+  const results = [];
+  for (const y0 of [40, 39, 38]) {
+    const capture = JSON.parse(await readFile(new URL(`.work/captures/shot-above-y${y0}.json`, root), 'utf8'));
+    const state = startLevel({ tables: readTables(exe), map, level: 11, tileset: levelTileset(exe, 11), demoMode: 2, rngSeed: 0, strict: false });
+    state.players[0].x = 424; state.players[0].y = y0;
+    let k = 0;
+    for (const st of capture.stops) {
+      while (k < st.af84 - 2) stepFrame(state, input[k++], 0);
+      const above = 16 - st.y, column = (st.x - 16) >> 4;
+      results.push({ above, original: st.word, port: shotProbe(state, st.x, st.y).word, oldRule: above <= 3 ? state.types[column] : undefined });
+    }
+  }
+  const modelled = results.filter(r => r.port !== null), heights = [...new Set(modelled.map(r => r.above))].sort((a, b) => a - b);
+  check(`shots above the map: ${modelled.length} reads at ${heights.join(', ')} pixels match the original's word`, () => {
+    assert.deepEqual(heights, [1, 2, 3, 4, 6, 7, 8]); for (const r of modelled) assert.equal(r.port, r.original, `${r.above} px above`); });
+  check('shots above the map: only the panel buffer read 5 pixels above is unmodelled', () => assert.deepEqual([...new Set(results.filter(r => r.port === null).map(r => r.above))], [5]));
+  check('shots above the map: the earlier row-0 rule is detected', () => assert.ok(results.some(r => r.oldRule !== undefined && r.oldRule !== r.original)));
 }
 console.log(`runtime checks: ${checks} passed`);
