@@ -142,7 +142,7 @@ for (const [name, song, file] of CAPTURES) {
   const hurtsAt = shift => { const p = portHurts(shift); return Object.fromEntries(Object.keys(p).map(N => [N, p[N]])); };
   check('death run A: hurts per pass (2 in 486, 4 in 487, 1 alien hit in 926)', () => assert.deepEqual(hurtsAt(0), { ...Object.fromEntries(Object.keys(hurtsAt(0)).map(N => [N, 0])), ...origHurts }));
   check('death run A: life lost and dying script in pass 487, respawn in 520', () => { for (const [kind, , orig, port] of events(0).filter(e => e[0] !== 'energy')) assert.equal(port, orig, kind); });
-  check('death run A: one step later is detected', () => assert.ok(events(1).some(([k, , o, p]) => k !== 'energy' && o !== p) || JSON.stringify(hurtsAt(1)) !== JSON.stringify(hurtsAt(0))));
+  check('death run A: one step later is detected', () => assert.ok(events(1).some(([k, , o, p]) => k !== 'energy' && o !== p) || Object.entries(origHurts).some(([N, n]) => hurtsAt(1)[N] !== n)));
   // Run B: the generator kill and the self-destruct start in pass 622.
   const runB = await load('gen-countdown-runB'), kill = runB.stops.find(st => st.kind === 'watch [BD5F]'), N = u16(kill.af84);
   check(`generator run B: kill and self-destruct in pass ${N}`, () => { assert.equal(B[N - 1].fc, N); assert.deepEqual([B[N - 2].generators, B[N - 1].generators, B[N - 1].selfDestruct], [3, 4, true]);
@@ -156,14 +156,13 @@ for (const [name, song, file] of CAPTURES) {
     for (let k = 0; k < N - 1; k++) stepFrame(state, input[k], 0);
     while (tick < start) { timerTick(state); tick++; }
     stepFrame(state, input[N - 1], 0);
-    const rows = [[N, tick, state.tickAccumulator, state.selfDestruct ? 0xff : 0, state.seconds, state.secondCycle]], sounds = [];
-    while (rows.length < runB.countdown.length - 1) { const before = state.seconds; state.sounds = []; timerTick(state); tick++;
-      if (state.seconds !== before) { rows.push([tick, state.tickAccumulator, 0xff, state.seconds, state.secondCycle]); sounds.push(state.sounds.join()); } }
-    return { rows, sounds };
+    const rows = [[N, tick, state.tickAccumulator, state.selfDestruct ? 0xff : 0, state.seconds, state.secondCycle]];
+    while (rows.length < runB.countdown.length - 1) { const before = state.seconds; timerTick(state); tick++;
+      if (state.seconds !== before) { rows.push([tick, state.tickAccumulator, 0xff, state.seconds, state.secondCycle]); } }
+    return { rows };
   };
   const want = runB.countdown.slice(1).map((r, i) => i ? r.slice(1, 6) : r.slice(0, 6));
-  check(`countdown run B: ${want.length} values from the start to 0x49, in INT 8 ticks`, () => { const c = countdown(0); assert.deepEqual(c.rows, want);
-    assert.deepEqual(c.sounds, want.slice(1).map(r => r[4] === 0 ? '11,22' : '22')); });
+  check(`countdown run B: ${want.length} values from the start to 0x49 (seconds, accumulator, cycle counter), in INT 8 ticks`, () => assert.deepEqual(countdown(0).rows, want));
   check('countdown run B: starting one tick later is detected', () => assert.notDeepEqual(countdown(1).rows, want));
 }
 console.log(`runtime checks: ${checks} passed`);

@@ -282,7 +282,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
     spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
     bounceCounter: 0, // cs:5671, likewise
-    objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, () => ({ ...emptyRecord(), push: 0, moveMask: 0, stuck: 0 })), // fields 7376 never sets: 0 after boot (observed) objectCount: 0,
+    objects: Array.from({ length: PLAYER_RECORDS + OBJECT_SLOTS }, () => ({ ...emptyRecord(), push: 0, moveMask: 0, stuck: 0 })), // the level load clears all records (1000:6644 from 1DA9) objectCount: 0,
     aliens: Array.from({ length: 6 }, () => ({ kind: 0, direction: 0, object: null, cell: -1, speed: 0, timer: 0, column: 0 })),
     aliveAliens: 0, spawnCounter: 0, scriptedSpawnTimer: -1, scriptedSpawn: null,
     rng: rng ? { ...rng } : seedRandom(rngSeed), // 1000:17FC seeds from the high word of the INT 8 counter, 0 early in a session
