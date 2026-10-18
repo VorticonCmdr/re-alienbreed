@@ -29,7 +29,7 @@ export function drawObjects(frame, view, sheets, descriptor, drawSprite, clipBot
   const cam = view.spriteCamera;
   for (const o of view.objects) {
     if (!o.frame) continue;
-    const d = descriptor(o.frame), sheet = sheets[d.sheetVariable];
+    const base = descriptor(o.frame), bank = view.frameBanks?.[o.frame], d = bank === undefined ? base : { ...base, bank }, sheet = sheets[d.sheetVariable];
     if (!sheet) throw new Error(`No sprite sheet loaded for frame 0x${o.frame.toString(16)} (variable ${d.sheetVariable.toString(16)})`);
     const x = o.x - d.width / 2 - cam.x + (o.flip ? -d.adjustX : d.adjustX), y = o.y - o.z - d.height - cam.y + d.adjustY;
     if (o.player2) throw new Error('Drawing player 2 (sheet selection through [9E40]) is not modelled yet');

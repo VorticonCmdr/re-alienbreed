@@ -66,6 +66,9 @@ function stepScript(state, record) {
       case 0x20: ptr = record.returnAddress; record.returnAddress = 0; break;
       case 0x26: record.flags0B = (record.flags0B & ~3) | (arg() & 3); break;
       case 0x30: setObjectType(state, record, arg()); ptr = record.script; break;
+      case 0x3c: record.flags0A |= 0x40; break; // per-type hook on (1000:7147)
+      case 0x3e: record.flags0A &= ~0x40; break;
+      case 0x40: ptr = (ptr + 0x0c) & 0xffff; break; // skips six words (1000:71C4)
       case 0x48: record.flags0B &= ~0x40; break;
       case 0x4a: record.flags0B |= 0x10; break;
       case 0x4c: record.flags0B &= ~0x10; break;
@@ -85,8 +88,8 @@ function stepScript(state, record) {
     }
   }
 }
-// 1000:6918: the per-type hook only runs with +0A bit 0x40 (bosses and type 0x0B); not modelled yet.
-function yieldHook(state, record) { if (record.flags0A & 0x40) state.report(`Object hook for type 0x${record.type.toString(16)}`); }
+// 1000:6918: the per-type hook only runs with +0A bit 0x40 (bosses and type 0x0B), see sim.js.
+function yieldHook(state, record) { if (record.flags0A & 0x40) { if (state.objectHook) state.objectHook(record); else state.report(`Object hook for type 0x${record.type.toString(16)}`); } }
 
 // 1000:6874: all active records in order, counted down from the active total.
 export function runScripts(state) {

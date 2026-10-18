@@ -53,6 +53,8 @@ async function loadCommon(source) {
     hud: createHud(decodeVga(decompressLzhuf(await source.read('PANEL.VHF'))).pixels),
     font: cutFont(decompressLzhuf(await source.read(exe.string(0x2041, 0x9a8c + 8))).subarray(0, 64000)), text: createTextState(),
     deckman: await sprites(deckmanSheetName(exe)),
+    // Boss sheets (records 2041:93FA, 93E6, 940E; the file name follows each 8-byte record), swapped in by 1000:6030.
+    bossSheets: Object.fromEntries(await Promise.all([0x93fa, 0x93e6, 0x940e].map(async record => [record, await sprites(exe.string(0x2041, record + 8))]))),
     songs: Object.fromEntries(await Promise.all(Object.keys(SONGS).map(async song => [song, await source.read(songFile(exe, song))]))),
   };
   // The FM driver programs the PIT itself (fn 4, fn 6, fn 7), which sets the INT 8 rate.
@@ -71,9 +73,9 @@ async function loadLevel(level, carried) {
   const dac = levelStartPalette(exe, buildGamePalette(exe, sheetBytes[1], level), level), redDac = redAlertPalette(dac);
   // Sheets by the DS variable a frame descriptor names: players (B409, PLAYER2 at +0x7D00), explosions (ADD2), aliens (B0B4).
   const aliens = decodePlanar(decompressLzhuf(await source.read(alienSheetName(exe, level)))).pixels;
-  const sheets = { 0xb409: assets.players, 0xadd2: assets.explosions, 0xb0b4: [aliens] };
+  const sheets = { 0xb409: assets.players, 0xadd2: assets.explosions, 0xb0b4: [aliens] }, levelAliens = [aliens];
   const state = startLevel({ tables, map, level, tileset: levelTileset(exe, level), strict: !$('preview').checked, saved: carried.player, globals: carried.globals, rngSeed: carried.rngSeed });
-  game = { level, state, tileStore, dac, redDac, sheets, hud: assets.hud, descriptor: assets.descriptor, tables, framebuffer: createFramebuffer() };
+  game = { level, state, tileStore, dac, redDac, levelDac: dac, levelAliens, alienPalette: null, sheets, hud: assets.hud, descriptor: assets.descriptor, tables, framebuffer: createFramebuffer() };
 }
 
 function renderGame() {
@@ -88,6 +90,15 @@ function renderGame() {
   for (const p of state.players) if (p.alive) drawHud(hud, p);
   blitPanel(fb, hud);
   display.frame.set(fb);
+}
+// 1000:6030 copies a boss palette to bank 0xC0 and swaps the alien sheet; 205F restores both after the boss.
+function bossPalette(state) {
+  game.alienPalette = state.alienPalette;
+  const dac = Uint8Array.from(game.levelDac);
+  if (state.alienPalette !== null) dac.set(assets.exe.bytes(0x2041, state.alienPalette, 48), 0xc0 * 3);
+  game.dac = dac; game.redDac = redAlertPalette(dac);
+  game.sheets[0xb0b4] = state.alienSheet !== null ? [assets.bossSheets[state.alienSheet]] : game.levelAliens;
+  display.dac.set(state.redAlert ? game.redDac : game.dac);
 }
 function present() {
   image.data.set(toRgba(display.frame, dacToRgb(display.dac))); context.putImageData(image, 0, 0);
@@ -130,8 +141,9 @@ function* gameSession(firstLevel) {
       if (key === 'abort' || state.levelOver) { result = key === 'abort' ? 'aborted' : state.levelOver; break; }
       stepFrame(state, keyboard.inputByte(), retrace.ticks);
       for (const id of state.sounds) effects.play(id);
-      // 1000:5FBD starts the alarm song without stopping the in-game one (see docs/port/avmfm.md 2.4).
-      if (state.music !== music.song) music.start(state.music, assets.songs[state.music], { stopFirst: false });
+      // 1000:5FBD starts the alarm song without stopping the in-game one (docs/port/avmfm.md 2.4); the boss stops first.
+      if (state.music !== music.song) { music.start(state.music, assets.songs[state.music], { stopFirst: state.musicStop }); state.musicStop = false; }
+      if (state.alienPalette !== game.alienPalette) bossPalette(state);
       renderGame(); display.dac.set(state.redAlert ? game.redDac : game.dac);
       yield;
     }

@@ -33,6 +33,8 @@ export function readTables(exe) {
     shotFrames: Array.from({ length: 6 }, (_, t) => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, 0x570c + 32 * t + 2 * i))),
     shotPhaseFrames: [0x57cc, 0x57ec].map(o => Array.from({ length: 16 }, (_, i) => exe.u16(CODE, o + 2 * i))),
     fadingShotFrames: Array.from({ length: 7 }, (_, i) => exe.u16(CODE, 0x5682 + 2 * i)),
+    codeWord: offset => exe.u16(CODE, offset & 0xffff), // for reads the original makes past the end of a table
+    dataWord: offset => exe.u16(DATA, offset & 0xffff),
     animList(offset) { // DS word lists for the tile animation ticker 1000:8606
       if (!lists.has(offset)) {
         const words = [];
@@ -273,7 +275,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     tables, level, strict, demoMode, tiles: Uint16Array.from(map.tiles), types: Uint16Array.from(map.types),
     camera: { x: 0, y: 0 }, lag: 0, frame: 0, frameCounter: 0, timer60: 0, timer104: 0, burning: 0,
     animations: Array(79).fill(null), doors: [], sounds: [], diagnostics: [], playerCount: 1, shareCredits: false,
-    wallsDestroyed: 0, bossActive: false, selfDestruct: false, objectiveTriggered: false,
+    wallsDestroyed: 0, bossActive: false, aliensSuppressed: false, bossDying: false, alienPalette: null, alienSheet: null, frameBanks: {}, musicStop: false, selfDestruct: false, objectiveTriggered: false,
     shots: Array.from({ length: 32 }, () => ({ type: 0, x: 0, y: 0, direction: 0, counter: 0, vx: 0, vy: 0 })),
     spreadCounter: 0, // cs:5A43; its value at program start is not yet confirmed
     bounceCounter: 0, // cs:5671, likewise
@@ -286,6 +288,7 @@ export function startLevel({ tables, map, level, tileset, demoMode = 0, strict =
     music: 'ingame',
   };
   state.report = message => unsupported(state, message);
+  state.objectHook = record => objectHook(state, record);
   if (globals) Object.assign(state, globals, { rng: { ...globals.rng } }); // before 3D10, which may reset the timers
   // Probes above the top row read unrelated memory in the original; a decision that depends on one is reported.
   const codeAt = (x, y) => {
@@ -390,7 +393,7 @@ export function mainLoopKeys(state, scancode, abortScancode) {
 // Variables the level load never resets (static audit of 1000:1937-1FC1): the RNG [B0BA]-[B0BE], the frame counter
 // [AF84], cs:4035/4037 (reset only by some decor in 3D10), [8182], cs:5A43, cs:5671, cs:5119, the INT 8 work [AD4C]
 // and cs:7969, and the level 16/17 spawn timer cs:602A.
-const CARRIED = ['rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer'];
+const CARRIED = ['aliensSuppressed', 'rng', 'frameCounter', 'timer60', 'timer104', 'burning', 'spreadCounter', 'bounceCounter', 'spawnCounter', 'tickAccumulator', 'secondCycle', 'scriptedSpawnTimer'];
 export const carriedGlobals = state => Object.fromEntries(CARRIED.map(k => [k, k === 'rng' ? { ...state.rng } : state[k]]));
 
 // Player 1's carried values for a new game (1000:188B-1932, 18BD-18FF) and their save at the end of a level
@@ -415,17 +418,18 @@ export function stepFrame(state, input, ticks = 0) {
   const objects = drawList(state); // 1000:6764 draws before this frame's shots and scripts
   updateShots(state);
   if (state.endSequence) endSequenceFrame(state);
+  if (state.bossDying) { state.bossDying = false; bossDeath(state); } // 1000:3846
   for (const r of state.objects) if (r.active) { r.oldX = r.x; r.oldY = r.y; r.oldZ = r.z; } // 1000:65FC
   runScripts(state);
   state.view = {
-    tileCamera, spriteCamera: { ...state.camera }, objects, frameCounter: state.frameCounter, shotPhase: state.shotPhase,
+    tileCamera, spriteCamera: { ...state.camera }, objects, frameCounter: state.frameCounter, shotPhase: state.shotPhase, frameBanks: { ...state.frameBanks },
     timerDigits: state.selfDestruct ? state.seconds : null, // 1000:3AED, drawn after the shots
     shots: state.shots.filter(s => s.type).map(s => ({ type: s.type, x: s.x, y: s.y, direction: s.direction, counter: s.counter })),
   };
   state.shotPhase = (state.frameCounter >> 2) & 1; // cs:578C refreshed after 52F4 for the next frame's type-6 shots
   state.atFlip = { objectCount: state.objectCount }; // what the original holds at its frame flip (for comparisons)
   state.timer60 = (state.timer60 + 1) % 60; state.timer104 = (state.timer104 + 1) % 104;
-  if (state.objectiveTriggered) { state.objectiveTriggered = false; unsupported(state, 'Objective cell 0x3D (self-destruct or boss start)'); }
+  if (state.objectiveTriggered) { state.objectiveTriggered = false; startBoss(state); } // 1000:38C6
   if (!state.endSequence) for (const player of state.players) if (player.alive) updatePlayer(state, player, input);
   for (const player of state.players) if (player.alive && s16(player.energy) <= 0) killPlayer(state, player);
   if (!state.endSequence) updateAliens(state);
@@ -655,6 +659,7 @@ export function updateAliens(state) {
     if (!slot.kind) { spawnAlien(state, slot); continue; }
     const a = slot.object; if (a.type === 7) continue;
     state.alienHit = false;
+    if (state.aliensSuppressed) { removeAlien(state, slot); continue; } // 1000:4A98 while a boss is active
     const { x: cx, y: cy } = state.camera;
     if (a.x < cx - 0x40 || a.x > cx + 0x180 || a.y < cy - 0x40 || a.y > cy + 0xf0) { removeAlien(state, slot); continue; }
     let lastPlayer = null, died = false;
@@ -701,4 +706,112 @@ export function updateAliens(state) {
     if (a.x === a.oldX && a.y === a.oldY) { a.stuck = (a.stuck + 1) & 0xffff; if (s16(a.stuck) >= 8) { slot.direction = 0; slot.timer = s16(slot.timer - 1); } }
     else a.stuck = 0;
   }
+}
+
+// ---- Bosses (objective cell 0x3D on levels 5, 8 and 17) ----
+
+// Per-level boss set-up in 1000:6030: blocked cells [x, y, animation list, tile, type] relative to the objective,
+// the 48-byte palette for bank 0xC0, the sprite file record, and the boss's energy.
+const BOSSES = {
+  5: { cells: [[0x50, 0x50], [0x60, 0x50]].map(([x, y]) => [x, y, 0x8be6, 0x240, 1]), palette: 0x951d, sheet: 0x93fa, energy: 0x200,
+    opened: [[0x50, 0x50], [0x60, 0x50]].map(([x, y]) => [x, y, 0x8bec, 0xc4, 0]) },
+  8: { cells: [], palette: 0x94ed, sheet: 0x93e6, energy: 0x280, opened: [0x10, 0x20, 0x30, 0x40].map(y => [0xb0, y, 0x8bc6, 0x01, 0]) },
+  17: { cells: [[0x40, 0x70], [0x50, 0x70], [0x60, 0x70]].map(([x, y]) => [x, y, 0x8be0, 0x16b, 1]), palette: 0x954d, sheet: 0x940e, energy: 0x300,
+    opened: [0x20, 0x30, 0x40].map(y => [0xb0, y, 0x8bc6, 0x16, 0]) },
+};
+// 1000:6566 after 86A9: start the animation, then replace the tile and the whole type word.
+function placeCell(state, x, y, list, tile, type) { const cell = worldCell(state, x, y); startAnimation(state, list, cell); writeCell(state, cell, tile, type); }
+
+// 1000:6030, once per level: aliens are removed while [7B49] is set, the boss palette and sheet replace the aliens',
+// a type 0x0C object appears above the objective, and the monster song starts after a stop.
+function startBoss(state) {
+  if (state.aliensSuppressed || state.bossActive) return;
+  state.bossActive = true; state.aliensSuppressed = true;
+  const boss = BOSSES[state.level], { x, y } = state.objective;
+  if (boss) {
+    for (const [dx, dy, list, tile, type] of boss.cells) placeCell(state, x + dx, y + dy, list, tile, type);
+    state.alienPalette = boss.palette; state.alienSheet = boss.sheet;
+    const record = allocObject(state, 0x0c, s16(x + 0x40), s16(y - 0x40));
+    if (record) Object.assign(record, { energy: boss.energy, target: null, countdown: 0, mode: 0, moveMask: 0 });
+  }
+  state.music = 'monster'; state.musicStop = true; // 1000:2261 then 2286
+}
+
+// 1000:6958 (type 0x0C) and 6C10 (type 0x0B), run when a script yields with +0A bit 0x40.
+function objectHook(state, r) {
+  if (r.type === 0x0c) bossHook(state, r);
+  else if (r.type === 0x0b) objectHook0B(state, r);
+}  // any other type: nothing (1000:6C10 returns)
+// Frames 0xED-0xEF are drawn with colour bank 0x0C, or 0x0E (the flash) in the frame after a hit (descriptor +0D).
+const BOSS_FRAMES = [0xed, 0xee, 0xef];
+function shotHit(state, r, dx, top, bottom) { // 1000:6C8E / 6CE1: the first shot whose box holds the object
+  for (const shot of state.shots) {
+    if (!shot.type || r.x < shot.x - dx || r.x > shot.x + dx || r.y > s16(shot.y + bottom) || r.y < s16(shot.y + top)) continue;
+    const damage = state.tables.shotDamage[shot.type]; shot.type = 0; return damage;
+  }
+  return 0;
+}
+function bossHook(state, r) {
+  for (const f of BOSS_FRAMES) state.frameBanks[f] = 0x0c;
+  const damage = shotHit(state, r, 0x20, 0x10, 0x10 + 0x7b);
+  if (damage) { for (const f of BOSS_FRAMES) state.frameBanks[f] = 0x0e; r.energy = s16(r.energy - damage); state.sounds.push(0x0c); }
+  if (r.energy <= 0) { r.energy = 0; state.dyingBoss = r; state.bossDying = true; return; }
+  for (const p of state.players) { // 1000:69AF
+    if (r.x < p.x - 0x14 || r.x > p.x + 0x14 || r.y < p.y - 0x14 || r.y > p.y + 0x14 || !(r.frame & 1) || p.type === 2) continue;
+    p.hurt = true; p.energy = u16(p.energy - 4); state.sounds.push(0x0f);
+  }
+  bossMove(state, r);
+}
+// 1000:69EF: chase a player or patrol one of four points above the objective; walls block per axis.
+function bossMove(state, r) {
+  const t = state.tables;
+  // +4F starts at 0, so until the first retarget the "player" is the word pair at DS:0000, the map's first type words.
+  const target = () => r.target ?? { x: s16(state.types[0]), y: s16(state.types[1]), type: state.types[7] };
+  let goal = { x: target().x, y: target().y };
+  r.countdown = s16(r.countdown - 1);
+  if (r.countdown <= 0) {
+    let retarget = r.mode !== 0;
+    if (!retarget) retarget = s16(random(state)) >= ({ 5: 0x5000, 8: 0x4000 }[state.level] ?? 0x6000);
+    if (retarget) {
+      if (state.playerCount === 2) state.report('Boss target with two players');
+      r.target = state.players[0]; state.spawnCounter = (state.spawnCounter + 1) & 0xffff;
+      r.mode = 0; r.countdown = state.level === 17 ? 0x80 : 0x60;
+    } else { r.mode = (random(state) & 3) + 1; r.countdown = 0x80; }
+  }
+  if (r.mode) goal = { x: s16(state.objective.x + ((r.mode - 1) & 3) * 64), y: s16(state.objective.y - 0x80) };
+  let d = 0;
+  if (s16(r.x & 0xfff0) !== s16(goal.x & 0xfff0)) d |= s16(r.x & 0xfff0) > s16(goal.x & 0xfff0) ? 2 : 1;
+  if (s16(r.y & 0xfff0) !== s16(goal.y & 0xfff0)) d |= s16(r.y & 0xfff0) > s16(goal.y & 0xfff0) ? 8 : 4;
+  r.facing = d; r.oldX = r.x; r.oldY = r.y;
+  const step = t.codeWord(0x7b4a + 2 * (state.lag * 16 + target().type));
+  const bits = d & r.moveMask; // 1000:5ED7
+  if (bits & 1) r.x = s16(r.x + step); if (bits & 2) r.x = s16(r.x - step);
+  if (bits & 4) r.y = s16(r.y + step); if (bits & 8) r.y = s16(r.y - step);
+  r.moveMask = 0x0f; r.conveyor = 0;
+  // The original passes whatever CX holds as the own cell; an occupied cell is treated as blocking (approximation).
+  for (const [dx, dy] of [[-0x2c, -0x78], [0x2c, -0x78], [-0x2c, 0x10], [0x2c, 0x10]]) if (wallTest(state, r.x + dx, r.oldY + dy, -1)) r.x = r.oldX;
+  for (const [dx, dy] of [[-0x2c, -0x78], [0x2c, -0x78], [-0x2c, 0x10], [0x2c, 0x10]]) if (wallTest(state, r.oldX + dx, r.y + dy, -1)) r.y = r.oldY;
+}
+function objectHook0B(state, r) { // 1000:6C10
+  if (state.selfDestruct) { setObjectType(state, r, 8); state.sounds.push(0x0d); return; }
+  const damage = shotHit(state, r, 0x10, 0, 0x20);
+  if (damage) { r.energy = s16(r.energy - damage); if (r.energy <= 0) { setObjectType(state, r, 8); state.sounds.push(0x0d); return; } }
+  for (const p of state.players) { // 1000:6C53: no hurt flash and no invulnerability check
+    if (r.x < p.x - 0x14 || r.x > p.x + 0x14 || r.y < p.y - 0x14 || r.y > p.y + 0x14 || !(r.frame & 1)) continue;
+    p.energy = u16(p.energy - 4); state.sounds.push(0x0f);
+  }
+}
+// 1000:3669, the frame after the boss's energy runs out: 20 explosions around it, aliens and their palette and sheet
+// return, the self-destruct starts, and level-specific cells open.
+function bossDeath(state) {
+  const r = state.dyingBoss; setObjectType(state, r, 8);
+  const x0 = r.x, y0 = r.y;
+  for (let i = 0; i < 20; i++) {
+    const x = s16((random(state) & 0x3f) - 0x20 + x0), y = s16((random(state) & 0x7f) - 0x80 + y0);
+    createEffect(state, 8 + (random(state) & 1), x, y); state.sounds.push(0x0d);
+  }
+  state.aliensSuppressed = false; state.alienPalette = null; state.alienSheet = null; // 1000:205F reloads the level's
+  startSelfDestruct(state);
+  const boss = BOSSES[state.level], { x, y } = state.objective;
+  if (boss) for (const [dx, dy, list, tile, type] of boss.opened) placeCell(state, x + dx, y + dy, list, tile, type);
 }
